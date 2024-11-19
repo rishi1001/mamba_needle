@@ -246,9 +246,18 @@ class NDArray:
             NDArray : reshaped array; this will point to thep
         """
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        if prod(self._shape) != prod(new_shape):
+            raise ValueError
+
+        suffix = 1
+        new_strides = []
+        for s in reversed(new_shape):
+            new_strides.insert(0, suffix)
+            suffix *= s
+
+        return NDArray.make(
+            new_shape, strides=tuple(new_strides), device=self.device, handle=self._handle, offset=self._offset
+        )
 
     def permute(self, new_axes):
         """
@@ -270,10 +279,11 @@ class NDArray:
             to the same memory as the original NDArray (i.e., just shape and
             strides changed).
         """
-
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        new_shape = tuple(self._shape[a] for a in new_axes)
+        new_strides = tuple(self._strides[a] for a in new_axes)
+        return NDArray.make(
+            new_shape, strides=new_strides, device=self.device, handle=self._handle, offset=self._offset
+        )
 
     def broadcast_to(self, new_shape):
         """
@@ -294,10 +304,27 @@ class NDArray:
             NDArray: the new NDArray object with the new broadcast shape; should
             point to the same memory as the original array.
         """
+        assert len(new_shape) >= len(self._shape)
+        
+        new_shape_index = 0
+        shape_index = -1 * (len(new_shape) - len(self._shape))
+        new_strides = []
+        while new_shape_index < len(new_shape):
+            if shape_index < 0:
+                new_strides.append(0)
+            else:
+                assert self._shape[shape_index] == 1 or self._shape[shape_index] == new_shape[new_shape_index]
+                if self._shape[shape_index] == 1:
+                    new_strides.append(0)
+                else:
+                    new_strides.append(self._strides[shape_index])
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+            new_shape_index += 1
+            shape_index += 1
+        
+        return NDArray.make(
+            tuple(new_shape), strides=tuple(new_strides), device=self.device, handle=self._handle, offset=self._offset
+        )
 
     ### Get and set elements
 
@@ -362,9 +389,23 @@ class NDArray:
         )
         assert len(idxs) == self.ndim, "Need indexes equal to number of dimensions"
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        offset = reduce(operator.add, [s * idx.start for s, idx in zip(self._strides, idxs)], 0)
+        new_shape = []
+        new_strides = []
+        for i, idx in enumerate(idxs):
+            new_dim_size = math.ceil((idx.stop - idx.start) / idx.step)
+            new_stride = self._strides[i] * idx.step
+
+            new_shape.append(new_dim_size)
+            new_strides.append(new_stride)
+
+        return NDArray.make(
+            tuple(new_shape),
+            strides=tuple(new_strides),
+            device=self.device,
+            handle=self._handle,
+            offset=self._offset + offset
+        )
 
     def __setitem__(self, idxs, other):
         """Set the values of a view into an array, using the same semantics
@@ -538,8 +579,10 @@ class NDArray:
 
         if axis is None:
             view = self.compact().reshape((1,) * (self.ndim - 1) + (prod(self.shape),))
-            #out = NDArray.make((1,) * self.ndim, device=self.device)
-            out = NDArray.make((1,), device=self.device)
+            if keepdims:
+                out = NDArray.make((1,) * self.ndim, device=self.device)
+            else:
+                out = NDArray.make((1,), device=self.device)
 
         else:
             if isinstance(axis, (tuple, list)):
@@ -572,9 +615,19 @@ class NDArray:
         Flip this ndarray along the specified axes.
         Note: compact() before returning.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        strides = list(self.strides)
+        offset = 0
+        for ax in axes:
+            offset += (self.shape[ax] - 1) * strides[ax]
+            strides[ax] *= -1
+
+        return NDArray.make(
+            self.shape,
+            strides,
+            device=self.device,
+            handle=self._handle,
+            offset=offset,
+        ).compact()
 
     def pad(self, axes):
         """
@@ -582,9 +635,17 @@ class NDArray:
         which lists for _all_ axes the left and right padding amount, e.g.,
         axes = ( (0, 0), (1, 1), (0, 0)) pads the middle axis with a 0 on the left and right side.
         """
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        dim = len(self.shape)
+        new_shape = list(self.shape)
+        
+        idxes = []
+        for i, (left, right) in enumerate(axes):
+            new_shape[i] += left + right
+            idxes.append(slice(left, left + self.shape[i]))
+
+        out = full(new_shape, 0, device=self.device)
+        out[tuple(idxes)] = self
+        return out
 
 def array(a, dtype="float32", device=None):
     """Convenience methods to match numpy a bit more closely."""

@@ -1,9 +1,13 @@
+import math
 from typing import List
+
+
 from needle.autograd import Tensor
 import needle.backend_ndarray.ndarray as ndarray
 from needle import ops
 import needle.init as init
 import numpy as np
+
 from .nn_sequence import Embedding
 from .nn_basic import (
     Parameter, 
@@ -103,14 +107,20 @@ class MultiHeadAttention(Module):
         _, _, _, v_dim = v.shape
 
         assert q_dim == k_dim == v_dim
+        d = q_dim
 
-        result = None
-        probs = None
+        probs = self.matmul(q, k) / math.sqrt(d)
+        if self.causal:
+            mask = self.create_causal_mask(
+                queries_len,
+                keys_values_len,
+                device=q.device,
+            ).broadcast_to(probs.shape)
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+            probs = probs + mask
 
+        probs = self.dropout(self.softmax(probs))
+        result = self.matmul(probs, v.transpose())
         return result, probs
 
 
@@ -199,13 +209,22 @@ class AttentionLayer(Module):
         _, keys_values_len, k_dim = k.shape
         _, _, v_dim = v.shape
 
-        result = None
+        inner_dim = self.num_head * self.dim_head
+        
+        q = self.q_projection(self.prenorm_q(q.reshape((batch_size * queries_len, q_dim))))
+        q = q.reshape((batch_size, queries_len, inner_dim))
+        k = self.k_projection(self.prenorm_k(k.reshape((batch_size * keys_values_len, q_dim))))
+        k = k.reshape((batch_size, keys_values_len, inner_dim))
+        v = self.v_projection(self.prenorm_v(v.reshape((batch_size * keys_values_len, v_dim))))
+        v = v.reshape((batch_size, keys_values_len, inner_dim))
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        q = q.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
+        k = k.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
+        v = v.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
 
-        return result
+        X, _ = self.attn(q, k, v)
+        X = X.transpose((1, 2)).reshape((batch_size*queries_len, inner_dim))
+        return self.out_projection(X).reshape((batch_size, queries_len, self.out_features))
 
 
 class TransformerLayer(Module):
@@ -228,9 +247,39 @@ class TransformerLayer(Module):
         self.device = device
         self.dtype = dtype
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.attn_layer = AttentionLayer(
+            q_features,
+            num_head,
+            dim_head,
+            dropout=dropout,
+            causal= causal,
+            device=device,
+            dtype=dtype,
+        )
+
+        self.ln = LayerNorm1d(
+            q_features,
+            device=device,
+            dtype=dtype
+        )
+        self.linear_1 = Linear(
+            q_features,
+            hidden_size,
+            # bias=False,
+            device=device,
+            dtype=dtype
+        )
+        self.linear_2 = Linear(
+            hidden_size,
+            q_features,
+            # bias=False,
+            device=device,
+            dtype=dtype
+        )
+        self.relu = ReLU()
+        
+        
+        self.dropout = Dropout(dropout)
 
     def forward(
         self,
@@ -244,12 +293,19 @@ class TransformerLayer(Module):
 
         batch_size, seq_len, x_dim = x.shape
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
-
+        x = x + self.dropout(self.attn_layer(x))
+        x = x + self.dropout(
+            self.linear_2(
+                self.dropout(
+                    self.relu(
+                        self.linear_1(
+                            self.ln(x.reshape((batch_size*seq_len, x_dim)))
+                        )
+                    )
+                )
+            )
+        ).reshape((batch_size, seq_len, x_dim))
         return x
-
 
 class Transformer(Module):
 
@@ -275,21 +331,40 @@ class Transformer(Module):
         self.dtype = dtype
         self.batch_first = batch_first
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.embedding = Embedding(sequence_len, embedding_size, device=device, dtype=dtype)
+        self.layers = [
+            TransformerLayer(
+                embedding_size,
+                num_head,
+                dim_head,
+                hidden_size,
+                dropout=dropout,
+                causal=causal,
+                device=device,
+                dtype=dtype,
+            )
+            for i in range(num_layers)
+        ]
 
-    def forward(
-        self,
-        x, h=None
-    ):
-
+    def forward(self, x, h=None ):
         if not self.batch_first:
             x = ops.transpose(x, axes=(0, 1))
 
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        batch_size, seq_len, x_dim = x.shape
+        
+        # seq = Tensor(ndarray.NDArray(
+        #         list(range(0, seq_len))
+        #     ), device=x.device, dtype=x.dtype).reshape((seq_len, 1)).broadcast_to((seq_len, batch_size))
+        # pos_encoding = self.embedding(seq).transpose((0, 1))
+
+        seq = Tensor(ndarray.NDArray(
+                list(range(0, seq_len))
+            ), device=x.device, dtype=x.dtype).reshape((1, seq_len)).broadcast_to((batch_size, seq_len))
+        pos_encoding = self.embedding(seq.transpose()).transpose((0, 1))
+        
+        x = x + pos_encoding
+        for layer in self.layers:
+            x = layer(x)
 
         if not self.batch_first:
             x = ops.transpose(x, axes=(0, 1))
