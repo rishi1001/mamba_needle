@@ -1,9 +1,12 @@
 import sys
-sys.path.append('./python')
+
+sys.path.append("./python")
+import math
+
 import needle as ndl
 import needle.nn as nn
-import math
 import numpy as np
+
 np.random.seed(0)
 
 
@@ -11,7 +14,7 @@ class ResNet9(ndl.nn.Module):
     def __init__(self, device=None, dtype="float32"):
         super().__init__()
         ### BEGIN YOUR SOLUTION ###
-        raise NotImplementedError() ###
+        raise NotImplementedError()  ###
         ### END YOUR SOLUTION
 
     def forward(self, x):
@@ -21,8 +24,17 @@ class ResNet9(ndl.nn.Module):
 
 
 class LanguageModel(nn.Module):
-    def __init__(self, embedding_size, output_size, hidden_size, num_layers=1,
-                 seq_model='rnn', seq_len=40, device=None, dtype="float32"):
+    def __init__(
+        self,
+        embedding_size,
+        output_size,
+        hidden_size,
+        num_layers=1,
+        seq_model="rnn",
+        seq_len=40,
+        device=None,
+        dtype="float32",
+    ):
         """
         Consists of an embedding layer, a sequence model (either RNN or LSTM), and a
         linear layer.
@@ -60,6 +72,10 @@ if __name__ == "__main__":
     model = ResNet9()
     x = ndl.ops.randu((1, 32, 32, 3), requires_grad=True)
     model(x)
-    cifar10_train_dataset = ndl.data.CIFAR10Dataset("data/cifar-10-batches-py", train=True)
-    train_loader = ndl.data.DataLoader(cifar10_train_dataset, 128, ndl.cpu(), dtype="float32")
+    cifar10_train_dataset = ndl.data.CIFAR10Dataset(
+        "data/cifar-10-batches-py", train=True
+    )
+    train_loader = ndl.data.DataLoader(
+        cifar10_train_dataset, 128, ndl.cpu(), dtype="float32"
+    )
     print(cifar10_train_dataset[1][0].shape)

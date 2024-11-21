@@ -1,4 +1,5 @@
 """Optimization module"""
+
 import needle as ndl
 import numpy as np
 
@@ -24,9 +25,15 @@ class SGD(Optimizer):
         self.weight_decay = weight_decay
 
     def step(self):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        for param in self.params:
+            u = (1 - self.momentum) * (
+                param.grad.detach() + self.weight_decay * param.data
+            )
+            if param in self.u:
+                u += self.momentum * self.u[param].detach()
+            self.u[param] = u
+
+            param.data = ndl.Tensor(param.data - self.lr * u, dtype=param.dtype)
 
     def clip_grad_norm(self, max_norm=0.25):
         """
@@ -55,10 +62,30 @@ class Adam(Optimizer):
         self.weight_decay = weight_decay
         self.t = 0
 
-        self.m = {}
+        self.u = {}
         self.v = {}
 
     def step(self):
-        ### BEGIN YOUR SOLUTION
-        raise NotImplementedError()
-        ### END YOUR SOLUTION
+        self.t += 1
+        for param in self.params:
+            u = param.grad.detach() + self.weight_decay * param.data
+            v = (1 - self.beta2) * ndl.ops.power_scalar(u, 2)
+            u = (1 - self.beta1) * u
+
+            if param in self.u:
+                u = u + self.beta1 * self.u[param]
+            if param in self.v:
+                v = v + self.beta2 * self.v[param]
+            self.u[param] = u.detach()
+            self.v[param] = v.detach()
+
+            u_hat = u / (1 - (self.beta1**self.t))
+            v_hat = v / (1 - (self.beta2**self.t))
+
+            param.data = ndl.Tensor(
+                param.data
+                - self.lr
+                * u_hat.detach()
+                / (ndl.ops.power_scalar(v_hat.detach(), 1 / 2) + self.eps),
+                dtype=param.dtype,
+            ).detach()

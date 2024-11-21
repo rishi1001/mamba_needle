@@ -1,19 +1,16 @@
 """Operator implementations."""
 
+import operator
 from functools import reduce
 from numbers import Number
-from typing import Optional, List, Tuple, Union
-import operator
+from typing import List, Optional, Tuple, Union
 
-from ..autograd import NDArray
-from ..autograd import Op, Tensor, Value, TensorOp
-from ..autograd import TensorTuple, TensorTupleOp
+from ..autograd import NDArray, Op, Tensor, TensorOp, TensorTuple, TensorTupleOp, Value
+from ..backend_selection import BACKEND, array_api
+from .ops_tuple import *
 
 # NOTE: we will import numpy as the array_api
 # as the backend for our computations, this line will change in later homeworks
-
-from ..backend_selection import array_api, BACKEND
-from .ops_tuple import *
 
 
 class EWiseAdd(TensorOp):
@@ -149,7 +146,10 @@ class Transpose(TensorOp):
             dims[-1], dims[-2] = dims[-2], dims[-1]
             return a.permute(dims)
         else:
-            dims[self.axes[0]], dims[self.axes[1]] = dims[self.axes[1]], dims[self.axes[0]]
+            dims[self.axes[0]], dims[self.axes[1]] = (
+                dims[self.axes[1]],
+                dims[self.axes[0]],
+            )
             return a.permute(dims)
 
     def gradient(self, out_grad, node):
@@ -196,7 +196,7 @@ def broadcast_to(a, shape):
 class Summation(TensorOp):
     def __init__(self, axes: Optional[tuple] = None):
         if isinstance(axes, int):
-            self.axes = (axes, )
+            self.axes = (axes,)
         else:
             self.axes = axes
 
@@ -219,6 +219,7 @@ class Summation(TensorOp):
 
 def summation(a, axes=None):
     return Summation(axes)(a)
+
 
 def reverse_broadcast(out, a_shape):
     out_shape = list(out.shape)
@@ -253,6 +254,7 @@ def reverse_broadcast(out, a_shape):
         out_ind += 1
 
     return out
+
 
 class MatMul(TensorOp):
     def compute(self, a, b):
@@ -340,7 +342,7 @@ class Tanh(TensorOp):
 
     def gradient(self, out_grad, node):
         a = node.inputs[0]
-        return (out_grad * negate((power_scalar(tanh(a), 2) - 1)), )
+        return (out_grad * negate((power_scalar(tanh(a), 2) - 1)),)
 
 
 def tanh(a):
@@ -360,10 +362,10 @@ class Stack(TensorOp):
     def compute(self, args: TensorTuple) -> Tensor:
         arrays = list(args)
         n = len(arrays)
-        
+
         if not arrays:
             raise ValueError
-        
+
         new_shape = list(arrays[0].shape)
         new_shape.insert(self.axis, n)
 
@@ -374,7 +376,6 @@ class Stack(TensorOp):
             idxs[self.axis] = i
             out[tuple(idxs)] = arrays[i]
         return out
-        
 
     def gradient(self, out_grad, node):
         a = node.inputs[0]
@@ -445,15 +446,15 @@ class Dilate(TensorOp):
 
         dim = len(a.shape)
         new_shape = list(a.shape)
-        
+
         idxes = [slice(None) for _ in range(dim)]
         for ax in self.axes:
             if ax < 0 or ax >= dim:
                 continue
 
-            new_shape[ax] *= (self.dilation + 1)
+            new_shape[ax] *= self.dilation + 1
             idxes[ax] = slice(0, new_shape[ax], self.dilation + 1)
-        
+
         out = array_api.full(new_shape, 0, device=a.device)
         out[tuple(idxes)] = a
         return out.compact()
@@ -477,15 +478,15 @@ class UnDilate(TensorOp):
 
         dim = len(a.shape)
         new_shape = list(a.shape)
-        
+
         idxes = [slice(None) for _ in range(dim)]
         for ax in self.axes:
             if ax < 0 or ax >= dim:
                 continue
 
             idxes[ax] = slice(0, a.shape[ax], self.dilation + 1)
-            new_shape[ax] //= (self.dilation + 1)
-        
+            new_shape[ax] //= self.dilation + 1
+
         out = array_api.full(new_shape, 0, device=a.device)
         out = a[tuple(idxes)]
         return out
@@ -502,44 +503,42 @@ class Conv(TensorOp):
     def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
         if stride is None:
             self.stride = 1
-        else:    
+        else:
             self.stride = stride
-        
+
         if padding is None:
             self.padding = 0
-        else:    
+        else:
             self.padding = padding
 
     def compute(self, A, B):
         if self.padding:
             p = self.padding
             A = A.pad(((0, 0), (p, p), (p, p), (0, 0)))
-        
+
         N, H, W, C_in = A.shape
         Ns, Hs, Ws, C_ins = A.strides
         K, _, _, C_out = B.shape
 
-        H_out = ((H-K)//self.stride) + 1
-        W_out = ((W-K)//self.stride) + 1
+        H_out = ((H - K) // self.stride) + 1
+        W_out = ((W - K) // self.stride) + 1
 
-        
         Z = NDArray.make(
             shape=(N, H_out, W_out, K, K, C_in),
-            strides=(Ns, Hs*self.stride, Ws*self.stride, Hs, Ws, C_ins),
+            strides=(Ns, Hs * self.stride, Ws * self.stride, Hs, Ws, C_ins),
             device=A.device,
             handle=A._handle,
         )
-        
-        Z = Z.compact().reshape((N*H_out*W_out,K*K*C_in))
-        
-        out = Z @ B.compact().reshape((K*K*C_in, C_out))
+
+        Z = Z.compact().reshape((N * H_out * W_out, K * K * C_in))
+
+        out = Z @ B.compact().reshape((K * K * C_in, C_out))
         return out.compact().reshape((N, H_out, W_out, C_out))
-    
-    
+
     def gradient(self, out_grad, node):
         lhs, rhs = node.inputs
         k = rhs.shape[0]
-        
+
         # out_hw = ((lhs.shape[1]-k)//self.stride) + 1
         # as_is = out_grad.shape[1]*self.stride - k + 1
         # want = lhs.shape[1]
@@ -548,10 +547,10 @@ class Conv(TensorOp):
             transpose(flip(rhs, (0, 1)), axes=(2, 3)),
             padding=k - self.padding - 1,
         )
-        
+
         # as_is = lhs.shape[1] - (out_grad.shape[1] * (self.stride)) + 1
         # want = rhs.shape[0]
-        
+
         r = conv(
             transpose(lhs, axes=(0, 3)),
             dilate(
@@ -573,5 +572,3 @@ class Conv(TensorOp):
 
 def conv(a, b, stride=1, padding=1):
     return Conv(stride, padding)(a, b)
-
-

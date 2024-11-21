@@ -1,6 +1,9 @@
 from typing import List, Optional
-from ..data_basic import Dataset
+
 import numpy as np
+
+from ..data_basic import Dataset
+
 
 class MNISTDataset(Dataset):
     def __init__(

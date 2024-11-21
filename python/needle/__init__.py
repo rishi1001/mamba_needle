@@ -1,11 +1,5 @@
-from . import ops
-from .ops import *
-from .autograd import Tensor, cpu, all_devices
-
-from . import init
-from .init import ones, zeros, zeros_like, ones_like
-
-from . import data
-from . import nn
-from . import optim
+from . import data, init, nn, ops, optim
+from .autograd import Tensor, all_devices, cpu
 from .backend_selection import *
+from .init import ones, ones_like, zeros, zeros_like
+from .ops import *

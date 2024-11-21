@@ -1,13 +1,15 @@
 """The module.
 """
+
 import math
 from typing import List
 
-from needle.autograd import Tensor
-from needle import ops
 import needle.init as init
 import numpy as np
-from .nn_basic import Parameter, Module
+from needle import ops
+from needle.autograd import Tensor
+
+from .nn_basic import Module, Parameter
 
 
 class Sigmoid(Module):
@@ -17,8 +19,17 @@ class Sigmoid(Module):
     def forward(self, x: Tensor) -> Tensor:
         return ops.power_scalar(ops.exp(ops.negate(x)) + 1, -1)
 
+
 class RNNCell(Module):
-    def __init__(self, input_size, hidden_size, bias=True, nonlinearity='tanh', device=None, dtype="float32"):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        bias=True,
+        nonlinearity="tanh",
+        device=None,
+        dtype="float32",
+    ):
         """
         Applies an RNN cell with tanh or ReLU nonlinearity.
 
@@ -40,48 +51,52 @@ class RNNCell(Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.device = device
-        
+
         bound = 1 / math.sqrt(hidden_size)
-        self.W_ih = Parameter(init.rand(
-            input_size,
-            hidden_size,
-            low=-1 * bound,
-            high=bound, 
-            device=device,
-        ))
-        self.W_hh = Parameter(init.rand(
-            hidden_size,
-            hidden_size,
-            low=-1 * bound,
-            high=bound, 
-            device=device,
-        ))
+        self.W_ih = Parameter(
+            init.rand(
+                input_size,
+                hidden_size,
+                low=-1 * bound,
+                high=bound,
+                device=device,
+            )
+        )
+        self.W_hh = Parameter(
+            init.rand(
+                hidden_size,
+                hidden_size,
+                low=-1 * bound,
+                high=bound,
+                device=device,
+            )
+        )
 
         if bias:
-            self.bias_ih = Parameter(init.rand(
-                hidden_size,
-                low=-1 * bound,
-                high=bound, 
-                device=device,
-            ))
-            
-            self.bias_hh = Parameter(init.rand(
-                hidden_size,
-                low=-1 * bound,
-                high=bound, 
-                device=device,
-            ))
-        else:
-            self.bias_ih = init.zeros(
-                hidden_size, device=device
-            )            
-            self.bias_hh = init.zeros(
-                hidden_size, device=device
+            self.bias_ih = Parameter(
+                init.rand(
+                    hidden_size,
+                    low=-1 * bound,
+                    high=bound,
+                    device=device,
+                )
             )
 
+            self.bias_hh = Parameter(
+                init.rand(
+                    hidden_size,
+                    low=-1 * bound,
+                    high=bound,
+                    device=device,
+                )
+            )
+        else:
+            self.bias_ih = init.zeros(hidden_size, device=device)
+            self.bias_hh = init.zeros(hidden_size, device=device)
+
         self.nonlinearity = {
-            'tanh': ops.tanh,
-            'relu': ops.relu,
+            "tanh": ops.tanh,
+            "relu": ops.relu,
         }[nonlinearity]
 
     def forward(self, X, h=None):
@@ -96,11 +111,8 @@ class RNNCell(Module):
             for each element in the batch.
         """
         if h is None:
-            h = init.zeros(
-                X.shape[0], self.hidden_size, device=self.device
-            )
-        
-        
+            h = init.zeros(X.shape[0], self.hidden_size, device=self.device)
+
         bias_ih = ops.broadcast_to(
             ops.reshape(self.bias_ih, (1, self.hidden_size)),
             h.shape,
@@ -113,7 +125,16 @@ class RNNCell(Module):
 
 
 class RNN(Module):
-    def __init__(self, input_size, hidden_size, num_layers=1, bias=True, nonlinearity='tanh', device=None, dtype="float32"):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        num_layers=1,
+        bias=True,
+        nonlinearity="tanh",
+        device=None,
+        dtype="float32",
+    ):
         """
         Applies a multi-layer RNN with tanh or ReLU non-linearity to an input sequence.
 
@@ -138,10 +159,15 @@ class RNN(Module):
         super().__init__()
 
         self.rnn_cells = [
-            RNNCell(input_size if i==0 else hidden_size, hidden_size, bias=bias, nonlinearity=nonlinearity, device=device)
+            RNNCell(
+                input_size if i == 0 else hidden_size,
+                hidden_size,
+                bias=bias,
+                nonlinearity=nonlinearity,
+                device=device,
+            )
             for i in range(num_layers)
         ]
-        
 
     def forward(self, X, h0=None):
         """
@@ -162,7 +188,7 @@ class RNN(Module):
             hs = ops.split(h0, 0)
         else:
             hs = [None] * num_layers
-        
+
         ys = []
         for i in range(len(Xs)):
             x_i = Xs[i]
@@ -174,12 +200,14 @@ class RNN(Module):
 
             hs = new_hs
             ys.append(h)
-    
+
         return ops.stack(ys, axis=0), ops.stack(hs, axis=0)
-                
+
 
 class LSTMCell(Module):
-    def __init__(self, input_size, hidden_size, bias=True, device=None, dtype="float32"):
+    def __init__(
+        self, input_size, hidden_size, bias=True, device=None, dtype="float32"
+    ):
         """
         A long short-term memory (LSTM) cell.
 
@@ -200,47 +228,50 @@ class LSTMCell(Module):
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.device = device
-        
+
         bound = 1 / math.sqrt(hidden_size)
-        self.W_ih = Parameter(init.rand(
-            input_size,
-            4*hidden_size,
-            low=-1 * bound,
-            high=bound, 
-            device=device,
-        ))
-        self.W_hh = Parameter(init.rand(
-            hidden_size,
-            4*hidden_size,
-            low=-1 * bound,
-            high=bound, 
-            device=device,
-        ))
+        self.W_ih = Parameter(
+            init.rand(
+                input_size,
+                4 * hidden_size,
+                low=-1 * bound,
+                high=bound,
+                device=device,
+            )
+        )
+        self.W_hh = Parameter(
+            init.rand(
+                hidden_size,
+                4 * hidden_size,
+                low=-1 * bound,
+                high=bound,
+                device=device,
+            )
+        )
 
         if bias:
-            self.bias_ih = Parameter(init.rand(
-                4*hidden_size,
-                low=-1 * bound,
-                high=bound, 
-                device=device,
-            ))
-            
-            self.bias_hh = Parameter(init.rand(
-                4*hidden_size,
-                low=-1 * bound,
-                high=bound, 
-                device=device,
-            ))
-        else:
-            self.bias_ih = init.zeros(
-                4*hidden_size, device=device
-            )            
-            self.bias_hh = init.zeros(
-                4*hidden_size, device=device
+            self.bias_ih = Parameter(
+                init.rand(
+                    4 * hidden_size,
+                    low=-1 * bound,
+                    high=bound,
+                    device=device,
+                )
             )
 
-        self.sig = Sigmoid()
+            self.bias_hh = Parameter(
+                init.rand(
+                    4 * hidden_size,
+                    low=-1 * bound,
+                    high=bound,
+                    device=device,
+                )
+            )
+        else:
+            self.bias_ih = init.zeros(4 * hidden_size, device=device)
+            self.bias_hh = init.zeros(4 * hidden_size, device=device)
 
+        self.sig = Sigmoid()
 
     def forward(self, X, h=None):
         """
@@ -261,41 +292,45 @@ class LSTMCell(Module):
         bs = X.shape[0]
 
         if h is None or h[0] is None or h[1] is None:
-            h = init.zeros(
-                X.shape[0], self.hidden_size, device=self.device
-            )
-            c = init.zeros(
-                X.shape[0], self.hidden_size, device=self.device
-            )
+            h = init.zeros(X.shape[0], self.hidden_size, device=self.device)
+            c = init.zeros(X.shape[0], self.hidden_size, device=self.device)
         else:
             h, c = h
-        
+
         bias_ih = ops.broadcast_to(
-            ops.reshape(self.bias_ih, (1, 4*self.hidden_size)),
-            (bs, 4*self.hidden_size),
+            ops.reshape(self.bias_ih, (1, 4 * self.hidden_size)),
+            (bs, 4 * self.hidden_size),
         )
         bias_hh = ops.broadcast_to(
-            ops.reshape(self.bias_hh, (1,4*self.hidden_size)),
-            (bs, 4*self.hidden_size),
+            ops.reshape(self.bias_hh, (1, 4 * self.hidden_size)),
+            (bs, 4 * self.hidden_size),
         )
 
         i, f, g, o = ops.split(
             ops.reshape(
                 (X @ self.W_ih) + bias_ih + (h @ self.W_hh) + bias_hh,
-                (bs, 4, self.hidden_size)
+                (bs, 4, self.hidden_size),
             ),
-            axis=1, 
-            # axis=2, 
+            axis=1,
+            # axis=2,
         )
-        i,f,g,o = self.sig(i), self.sig(f), ops.tanh(g), self.sig(o)
+        i, f, g, o = self.sig(i), self.sig(f), ops.tanh(g), self.sig(o)
 
-        c_out = f*c + i*g
+        c_out = f * c + i * g
         h_out = o * ops.tanh(c_out)
         return h_out, c_out
 
 
 class LSTM(Module):
-    def __init__(self, input_size, hidden_size, num_layers=1, bias=True, device=None, dtype="float32"):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        num_layers=1,
+        bias=True,
+        device=None,
+        dtype="float32",
+    ):
         super().__init__()
         """
         Applies a multi-layer long short-term memory (LSTM) RNN to an input sequence.
@@ -318,7 +353,12 @@ class LSTM(Module):
             of shape (4*hidden_size,).
         """
         self.lstm_cells = [
-            LSTMCell(input_size if i==0 else hidden_size, hidden_size, bias=bias, device=device)
+            LSTMCell(
+                input_size if i == 0 else hidden_size,
+                hidden_size,
+                bias=bias,
+                device=device,
+            )
             for i in range(num_layers)
         ]
 
@@ -348,7 +388,7 @@ class LSTM(Module):
         else:
             hs = [None] * num_layers
             cs = [None] * num_layers
-        
+
         ys = []
         for i in range(len(Xs)):
             x_i = Xs[i]
@@ -363,8 +403,9 @@ class LSTM(Module):
             hs = new_hs
             cs = new_cs
             ys.append(h)
-    
+
         return ops.stack(ys, axis=0), (ops.stack(hs, axis=0), ops.stack(cs, axis=0))
+
 
 class Embedding(Module):
     def __init__(self, num_embeddings, embedding_dim, device=None, dtype="float32"):
@@ -383,11 +424,13 @@ class Embedding(Module):
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
 
-        self.weight = Parameter(init.randn(
-            num_embeddings,
-            embedding_dim,
-            device=device,
-        ))
+        self.weight = Parameter(
+            init.randn(
+                num_embeddings,
+                embedding_dim,
+                device=device,
+            )
+        )
 
     def forward(self, x: Tensor) -> Tensor:
         """
@@ -406,9 +449,9 @@ class Embedding(Module):
                 init.one_hot(
                     self.num_embeddings,
                     ops.reshape(x, (seq_len * bs,)),
-                    device=x.device
+                    device=x.device,
                 ),
-                device=x.device
+                device=x.device,
             )
             # (seq_len, bs, self.num_embeddings)
         )

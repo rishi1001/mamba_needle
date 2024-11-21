@@ -1,5 +1,6 @@
 from ..data_basic import Dataset
 
+
 class NDArrayDataset(Dataset):
     def __init__(self, *arrays):
         self.arrays = arrays

@@ -1,9 +1,10 @@
-import operator
 import math
+import operator
 from functools import reduce
+
 import numpy as np
-from . import ndarray_backend_numpy
-from . import ndarray_backend_cpu
+
+from . import ndarray_backend_cpu, ndarray_backend_numpy
 
 
 # math.prod not in Python 3.7
@@ -222,7 +223,11 @@ class NDArray:
         """Restride the matrix without copying memory."""
         assert len(shape) == len(strides)
         return NDArray.make(
-            shape, strides=strides, device=self.device, handle=self._handle, offset=self._offset
+            shape,
+            strides=strides,
+            device=self.device,
+            handle=self._handle,
+            offset=self._offset,
         )
 
     @property
@@ -256,7 +261,11 @@ class NDArray:
             suffix *= s
 
         return NDArray.make(
-            new_shape, strides=tuple(new_strides), device=self.device, handle=self._handle, offset=self._offset
+            new_shape,
+            strides=tuple(new_strides),
+            device=self.device,
+            handle=self._handle,
+            offset=self._offset,
         )
 
     def permute(self, new_axes):
@@ -282,7 +291,11 @@ class NDArray:
         new_shape = tuple(self._shape[a] for a in new_axes)
         new_strides = tuple(self._strides[a] for a in new_axes)
         return NDArray.make(
-            new_shape, strides=new_strides, device=self.device, handle=self._handle, offset=self._offset
+            new_shape,
+            strides=new_strides,
+            device=self.device,
+            handle=self._handle,
+            offset=self._offset,
         )
 
     def broadcast_to(self, new_shape):
@@ -305,7 +318,7 @@ class NDArray:
             point to the same memory as the original array.
         """
         assert len(new_shape) >= len(self._shape)
-        
+
         new_shape_index = 0
         shape_index = -1 * (len(new_shape) - len(self._shape))
         new_strides = []
@@ -313,7 +326,10 @@ class NDArray:
             if shape_index < 0:
                 new_strides.append(0)
             else:
-                assert self._shape[shape_index] == 1 or self._shape[shape_index] == new_shape[new_shape_index]
+                assert (
+                    self._shape[shape_index] == 1
+                    or self._shape[shape_index] == new_shape[new_shape_index]
+                )
                 if self._shape[shape_index] == 1:
                     new_strides.append(0)
                 else:
@@ -321,9 +337,13 @@ class NDArray:
 
             new_shape_index += 1
             shape_index += 1
-        
+
         return NDArray.make(
-            tuple(new_shape), strides=tuple(new_strides), device=self.device, handle=self._handle, offset=self._offset
+            tuple(new_shape),
+            strides=tuple(new_strides),
+            device=self.device,
+            handle=self._handle,
+            offset=self._offset,
         )
 
     ### Get and set elements
@@ -389,7 +409,9 @@ class NDArray:
         )
         assert len(idxs) == self.ndim, "Need indexes equal to number of dimensions"
 
-        offset = reduce(operator.add, [s * idx.start for s, idx in zip(self._strides, idxs)], 0)
+        offset = reduce(
+            operator.add, [s * idx.start for s, idx in zip(self._strides, idxs)], 0
+        )
         new_shape = []
         new_strides = []
         for i, idx in enumerate(idxs):
@@ -404,7 +426,7 @@ class NDArray:
             strides=tuple(new_strides),
             device=self.device,
             handle=self._handle,
-            offset=self._offset + offset
+            offset=self._offset + offset,
         )
 
     def __setitem__(self, idxs, other):
@@ -573,7 +595,7 @@ class NDArray:
 
     ### Reductions, i.e., sum/max over all element or over given axis
     def reduce_view_out(self, axis, keepdims=False):
-        """ Return a view to the array set up for reduction functions and output array. """
+        """Return a view to the array set up for reduction functions and output array."""
         if isinstance(axis, tuple) and not axis:
             raise ValueError("Empty axis in reduce")
 
@@ -593,9 +615,11 @@ class NDArray:
                 tuple([a for a in range(self.ndim) if a != axis]) + (axis,)
             )
             out = NDArray.make(
-                tuple([1 if i == axis else s for i, s in enumerate(self.shape)])
-                if keepdims else
-                tuple([s for i, s in enumerate(self.shape) if i != axis]),
+                (
+                    tuple([1 if i == axis else s for i, s in enumerate(self.shape)])
+                    if keepdims
+                    else tuple([s for i, s in enumerate(self.shape) if i != axis])
+                ),
                 device=self.device,
             )
         return view, out
@@ -637,7 +661,7 @@ class NDArray:
         """
         dim = len(self.shape)
         new_shape = list(self.shape)
-        
+
         idxes = []
         for i, (left, right) in enumerate(axes):
             new_shape[i] += left + right
@@ -646,6 +670,7 @@ class NDArray:
         out = full(new_shape, 0, device=self.device)
         out[tuple(idxes)] = self
         return out
+
 
 def array(a, dtype="float32", device=None):
     """Convenience methods to match numpy a bit more closely."""

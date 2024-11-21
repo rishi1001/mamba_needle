@@ -1,36 +1,28 @@
 import math
 from typing import List
 
-
-from needle.autograd import Tensor
 import needle.backend_ndarray.ndarray as ndarray
-from needle import ops
 import needle.init as init
 import numpy as np
+from needle import ops
+from needle.autograd import Tensor
 
+from .nn_basic import Dropout, LayerNorm1d, Linear, Module, Parameter, ReLU, Sequential
 from .nn_sequence import Embedding
-from .nn_basic import (
-    Parameter, 
-    Module, 
-    ReLU,
-    Dropout,
-    LayerNorm1d,
-    Linear,
-    Sequential
-)
 
 
 class MultiHeadAttention(Module):
     """
     The multi-head self attention module.
     """
+
     def __init__(
         self,
         *,
-        dropout = 0.,
-        causal = False,
-        device = None,
-        dtype = "float32",
+        dropout=0.0,
+        causal=False,
+        device=None,
+        dtype="float32",
     ):
 
         super().__init__()
@@ -46,10 +38,10 @@ class MultiHeadAttention(Module):
         return a triangular causal mask.
         """
         mask = -np.finfo(np.float32).max * np.triu(
-            np.ones((1, 1, i, j), dtype=np.float32), j - i + 1)
+            np.ones((1, 1, i, j), dtype=np.float32), j - i + 1
+        )
 
-        return ndarray.array(
-            mask, device=device)
+        return ndarray.array(mask, device=device)
 
     def matmul(self, a, b_transpose):
         """
@@ -73,13 +65,13 @@ class MultiHeadAttention(Module):
 
     def softmax(self, logit):
         """
-        The softmax function; 
+        The softmax function;
         """
         max_val = Tensor(
             logit.realize_cached_data().max(axis=3),
             device=logit.device,
             dtype=logit.dtype,
-            requires_grad=False
+            requires_grad=False,
         )
 
         max_val = max_val.reshape((*logit.shape[:-1], 1))
@@ -95,7 +87,9 @@ class MultiHeadAttention(Module):
 
     def forward(
         self,
-        q, k, v,
+        q,
+        k,
+        v,
     ):
         """
         The forward function of the MultiHeadAttention activation function.
@@ -135,10 +129,10 @@ class AttentionLayer(Module):
         k_features: int = None,
         v_features: int = None,
         out_features: int = None,
-        dropout = 0.,
-        causal = True,
-        device = None,
-        dtype = "float32",
+        dropout=0.0,
+        causal=True,
+        device=None,
+        dtype="float32",
     ):
 
         super().__init__()
@@ -161,36 +155,35 @@ class AttentionLayer(Module):
         self.num_head = num_head
         self.dim_head = dim_head
 
-        self.prenorm_q = LayerNorm1d(
-            q_features, device=device, dtype=dtype)
-        self.prenorm_k = LayerNorm1d(
-            k_features, device=device, dtype=dtype)
-        self.prenorm_v = LayerNorm1d(
-            v_features, device=device, dtype=dtype)
+        self.prenorm_q = LayerNorm1d(q_features, device=device, dtype=dtype)
+        self.prenorm_k = LayerNorm1d(k_features, device=device, dtype=dtype)
+        self.prenorm_v = LayerNorm1d(v_features, device=device, dtype=dtype)
 
         inner_dim = num_head * dim_head
-        
+
         self.q_projection = Linear(
-            q_features, inner_dim, bias=False,
-            device=device, dtype=dtype)
+            q_features, inner_dim, bias=False, device=device, dtype=dtype
+        )
         self.k_projection = Linear(
-            k_features, inner_dim, bias=False,
-            device=device, dtype=dtype)
+            k_features, inner_dim, bias=False, device=device, dtype=dtype
+        )
         self.v_projection = Linear(
-            v_features, inner_dim, bias=False,
-            device=device, dtype=dtype)
+            v_features, inner_dim, bias=False, device=device, dtype=dtype
+        )
 
         self.attn = MultiHeadAttention(
-            dropout=dropout, causal=causal,
-            device=device, dtype=dtype)
+            dropout=dropout, causal=causal, device=device, dtype=dtype
+        )
 
         self.out_projection = Linear(
-            inner_dim, out_features, bias=False,
-            device=device, dtype=dtype)
+            inner_dim, out_features, bias=False, device=device, dtype=dtype
+        )
 
     def forward(
         self,
-        q, k=None, v=None,
+        q,
+        k=None,
+        v=None,
     ):
         """
         The forward function of the self-attention layer.
@@ -210,21 +203,35 @@ class AttentionLayer(Module):
         _, _, v_dim = v.shape
 
         inner_dim = self.num_head * self.dim_head
-        
-        q = self.q_projection(self.prenorm_q(q.reshape((batch_size * queries_len, q_dim))))
+
+        q = self.q_projection(
+            self.prenorm_q(q.reshape((batch_size * queries_len, q_dim)))
+        )
         q = q.reshape((batch_size, queries_len, inner_dim))
-        k = self.k_projection(self.prenorm_k(k.reshape((batch_size * keys_values_len, q_dim))))
+        k = self.k_projection(
+            self.prenorm_k(k.reshape((batch_size * keys_values_len, q_dim)))
+        )
         k = k.reshape((batch_size, keys_values_len, inner_dim))
-        v = self.v_projection(self.prenorm_v(v.reshape((batch_size * keys_values_len, v_dim))))
+        v = self.v_projection(
+            self.prenorm_v(v.reshape((batch_size * keys_values_len, v_dim)))
+        )
         v = v.reshape((batch_size, keys_values_len, inner_dim))
 
-        q = q.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
-        k = k.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
-        v = v.reshape((batch_size, queries_len, self.num_head, self.dim_head)).transpose((1, 2))
+        q = q.reshape(
+            (batch_size, queries_len, self.num_head, self.dim_head)
+        ).transpose((1, 2))
+        k = k.reshape(
+            (batch_size, queries_len, self.num_head, self.dim_head)
+        ).transpose((1, 2))
+        v = v.reshape(
+            (batch_size, queries_len, self.num_head, self.dim_head)
+        ).transpose((1, 2))
 
         X, _ = self.attn(q, k, v)
-        X = X.transpose((1, 2)).reshape((batch_size*queries_len, inner_dim))
-        return self.out_projection(X).reshape((batch_size, queries_len, self.out_features))
+        X = X.transpose((1, 2)).reshape((batch_size * queries_len, inner_dim))
+        return self.out_projection(X).reshape(
+            (batch_size, queries_len, self.out_features)
+        )
 
 
 class TransformerLayer(Module):
@@ -236,10 +243,10 @@ class TransformerLayer(Module):
         dim_head: int,
         hidden_size: int,
         *,
-        dropout = 0.,
-        causal = True,
-        device = None,
-        dtype = "float32",
+        dropout=0.0,
+        causal=True,
+        device=None,
+        dtype="float32",
     ):
 
         super().__init__()
@@ -252,39 +259,31 @@ class TransformerLayer(Module):
             num_head,
             dim_head,
             dropout=dropout,
-            causal= causal,
+            causal=causal,
             device=device,
             dtype=dtype,
         )
 
-        self.ln = LayerNorm1d(
-            q_features,
-            device=device,
-            dtype=dtype
-        )
+        self.ln = LayerNorm1d(q_features, device=device, dtype=dtype)
         self.linear_1 = Linear(
             q_features,
             hidden_size,
             # bias=False,
             device=device,
-            dtype=dtype
+            dtype=dtype,
         )
         self.linear_2 = Linear(
             hidden_size,
             q_features,
             # bias=False,
             device=device,
-            dtype=dtype
+            dtype=dtype,
         )
         self.relu = ReLU()
-        
-        
+
         self.dropout = Dropout(dropout)
 
-    def forward(
-        self,
-        x
-    ):
+    def forward(self, x):
         """
         The forward function of a Transformer Layer.
         Input: the hidden states from previous layers `x` with shape (batch_size, seq_len, x_dim)
@@ -298,14 +297,13 @@ class TransformerLayer(Module):
             self.linear_2(
                 self.dropout(
                     self.relu(
-                        self.linear_1(
-                            self.ln(x.reshape((batch_size*seq_len, x_dim)))
-                        )
+                        self.linear_1(self.ln(x.reshape((batch_size * seq_len, x_dim))))
                     )
                 )
             )
         ).reshape((batch_size, seq_len, x_dim))
         return x
+
 
 class Transformer(Module):
 
@@ -313,16 +311,16 @@ class Transformer(Module):
         self,
         embedding_size: int,
         hidden_size: int,
-        num_layers: int, 
+        num_layers: int,
         *,
         num_head: int = 8,
         dim_head: int = 32,
-        dropout = 0.,
-        causal = True,
-        device = None,
-        dtype = "float32",
-        batch_first = False,
-        sequence_len = 2048
+        dropout=0.0,
+        causal=True,
+        device=None,
+        dtype="float32",
+        batch_first=False,
+        sequence_len=2048,
     ):
 
         super().__init__()
@@ -331,7 +329,9 @@ class Transformer(Module):
         self.dtype = dtype
         self.batch_first = batch_first
 
-        self.embedding = Embedding(sequence_len, embedding_size, device=device, dtype=dtype)
+        self.embedding = Embedding(
+            sequence_len, embedding_size, device=device, dtype=dtype
+        )
         self.layers = [
             TransformerLayer(
                 embedding_size,
@@ -346,22 +346,26 @@ class Transformer(Module):
             for i in range(num_layers)
         ]
 
-    def forward(self, x, h=None ):
+    def forward(self, x, h=None):
         if not self.batch_first:
             x = ops.transpose(x, axes=(0, 1))
 
         batch_size, seq_len, x_dim = x.shape
-        
+
         # seq = Tensor(ndarray.NDArray(
         #         list(range(0, seq_len))
         #     ), device=x.device, dtype=x.dtype).reshape((seq_len, 1)).broadcast_to((seq_len, batch_size))
         # pos_encoding = self.embedding(seq).transpose((0, 1))
 
-        seq = Tensor(ndarray.NDArray(
-                list(range(0, seq_len))
-            ), device=x.device, dtype=x.dtype).reshape((1, seq_len)).broadcast_to((batch_size, seq_len))
+        seq = (
+            Tensor(
+                ndarray.NDArray(list(range(0, seq_len))), device=x.device, dtype=x.dtype
+            )
+            .reshape((1, seq_len))
+            .broadcast_to((batch_size, seq_len))
+        )
         pos_encoding = self.embedding(seq.transpose()).transpose((0, 1))
-        
+
         x = x + pos_encoding
         for layer in self.layers:
             x = layer(x)

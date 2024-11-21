@@ -1,8 +1,11 @@
 import os
 import pickle
-from typing import Iterator, Optional, List, Sized, Union, Iterable, Any
+from typing import Any, Iterable, Iterator, List, Optional, Sized, Union
+
 import numpy as np
+
 from ..data_basic import Dataset
+
 
 class CIFAR10Dataset(Dataset):
     def __init__(
@@ -10,7 +13,7 @@ class CIFAR10Dataset(Dataset):
         base_folder: str,
         train: bool,
         p: Optional[int] = 0.5,
-        transforms: Optional[List] = None
+        transforms: Optional[List] = None,
     ):
         """
         Parameters:
