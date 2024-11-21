@@ -572,3 +572,116 @@ class Conv(TensorOp):
 
 def conv(a, b, stride=1, padding=1):
     return Conv(stride, padding)(a, b)
+
+
+# TODO check this
+class Conv1d(TensorOp):
+    def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
+        if stride is None:
+            self.stride = 1
+        else:
+            self.stride = stride
+
+        if padding is None:
+            self.padding = 0
+        else:
+            self.padding = padding
+
+    def compute(self, A, B):
+        if self.padding:
+            p = self.padding
+            A = A.pad(((0, 0), (p, p), (0, 0)))
+
+        N, H, C_in = A.shape
+        Ns, Hs, C_ins = A.strides
+        K, _, C_out = B.shape
+
+        H_out = ((H - K) // self.stride) + 1
+
+        Z = NDArray.make(
+            shape=(N, H_out, K, C_in),
+            strides=(Ns, Hs * self.stride, Hs, C_ins),
+            device=A.device,
+            handle=A._handle,
+        )
+
+        Z = Z.compact().reshape((N * H_out, K * C_in))
+
+        out = Z @ B.compact().reshape((K * C_in, C_out))
+        return out.compact().reshape((N, H_out, C_out))
+
+    def gradient(self, out_grad, node):
+        lhs, rhs = node.inputs
+        k = rhs.shape[0]
+
+        l = conv1d(
+            dilate(out_grad, axes=(1), dilation=self.stride - 1),
+            transpose(flip(rhs, (0)), axes=(1)),
+            padding=k - self.padding - 1,
+        )
+
+        r = conv1d(
+            transpose(lhs, axes=(0, 2)),
+            dilate(
+                transpose(out_grad, axes=(0, 1)),
+                axes=(0),
+                dilation=self.stride - 1,
+            ),
+            padding=self.padding,
+        )
+        r = transpose(r, axes=(0, 1))
+        return l, r
+    
+
+def conv1d(a, b, stride=1, padding=1):
+    return Conv1d(stride, padding)(a, b)
+
+# TODO check concat
+class Concat(TensorOp):
+    def __init__(self, axis: int):
+        """
+        Concatenates a sequence of arrays along an existing dimension.
+        Parameters:
+        axis - dimension to concatenate along.
+        All arrays need to have matching sizes except along this axis.
+        """
+        self.axis = axis
+
+    def compute(self, args: TensorTuple) -> Tensor:
+        arrays = list(args)
+
+        if not arrays:
+            raise ValueError("No tensors to concatenate.")
+
+        # Check shape compatibility
+        for i in range(1, len(arrays)):
+            if any(s != t for j, (s, t) in enumerate(zip(arrays[0].shape, arrays[i].shape)) if j != self.axis):
+                raise ValueError("Shape mismatch: Tensors must have the same shape except along the concatenation axis.")
+
+        # Compute the shape of the output tensor
+        concat_size = sum(array.shape[self.axis] for array in arrays)
+        new_shape = list(arrays[0].shape)
+        new_shape[self.axis] = concat_size
+
+        out = array_api.empty(new_shape, device=arrays[0].device)
+
+        # Concatenate along the specified axis
+        start_idx = 0
+        for array in arrays:
+            end_idx = start_idx + array.shape[self.axis]
+            idxs = [slice(None)] * len(new_shape)
+            idxs[self.axis] = slice(start_idx, end_idx)
+            out[tuple(idxs)] = array
+            start_idx = end_idx
+
+        return out
+
+    def gradient(self, out_grad, node):
+        arrays = node.inputs
+        splits = [array.shape[self.axis] for array in arrays]
+        return split(out_grad, self.axis, splits)
+
+
+def concat(args, axis):
+    return Concat(axis)(make_tuple(*args))
+

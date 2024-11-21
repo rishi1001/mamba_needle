@@ -173,10 +173,24 @@ class MambaBlock(Module):
         # dt initialization
         # dt weights
         dt_init_std = config.dt_rank**-0.5 * config.dt_scale
+        # TODO verify it
         if config.dt_init == "constant":
-            nn.init.constant_(self.dt_proj.weight, dt_init_std)
+            self.dt_proj.weight = init.constant(
+                *self.dt_proj.weight.shape,
+                c=dt_init_std,
+                device=self.dt_proj.weight.device,
+                dtype=self.dt_proj.weight.dtype,
+                requires_grad=self.dt_proj.weight.requires_grad,
+            )
         elif config.dt_init == "random":
-            nn.init.uniform_(self.dt_proj.weight, -dt_init_std, dt_init_std)
+            self.dt_proj.weight = init.rand(
+                *self.dt_proj.weight.shape,
+                low=-dt_init_std,
+                high=dt_init_std,
+                device=self.dt_proj.weight.device,
+                dtype=self.dt_proj.weight.dtype,
+                requires_grad=self.dt_proj.weight.requires_grad,
+            )
         else:
             raise NotImplementedError
 
@@ -187,18 +201,25 @@ class MambaBlock(Module):
             + math.log(config.dt_min)
         ).clamp(min=config.dt_init_floor)
         inv_dt = dt + ops.log(
-            -torch.expm1(-dt)
+            -ops.exp(-dt) + 1
         )  # inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
 
         with torch.no_grad():
             self.dt_proj.bias.copy_(inv_dt)
         # self.dt_proj.bias._no_reinit = True # initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
         # todo : explain why removed
-
+        
         # S4D real initialization
-        A = torch.arange(1, config.d_state + 1, dtype="float32").repeat(
-            config.d_inner, 1
+        # A = torch.arange(1, config.d_state + 1, dtype="float32").repeat(
+        #     config.d_inner, 1
+        # )
+        # TODO verify arange and repeat
+        seq = Tensor(
+            ndarray.NDArray(list(range(1, config.d_state + 1))), device=self.A_log.device, dtype="float32"
         )
+
+        # Repeat the sequence along the first dimension (similar to torch.repeat)
+        A = seq.reshape((1, config.d_state)).broadcast_to((config.d_inner, config.d_state))
         self.A_log = Parameter(
             ops.log(A)
         )  # why store A in log ? to keep A < 0 (cf -torch.exp(...)) ? for gradient stability ?
@@ -436,7 +457,7 @@ class MambaBlock(Module):
 
         # x branch
         x_cache = x.unsqueeze(2)
-        x = self.conv1d(torch.cat([inputs, x_cache], dim=2))[
+        x = self.conv1d(ops.concat([inputs, x_cache], dim=2))[
             :, :, self.config.d_conv - 1
         ]  # (B, ED)
 
@@ -450,7 +471,7 @@ class MambaBlock(Module):
         output = self.out_proj(output)  # (B, D)
 
         # prepare cache for next call
-        inputs = torch.cat([inputs[:, :, 1:], x_cache], dim=2)  # (B, ED, d_conv-1)
+        inputs = ops.concat([inputs[:, :, 1:], x_cache], dim=2)  # (B, ED, d_conv-1)
         cache = (h, inputs)
 
         return output, cache
