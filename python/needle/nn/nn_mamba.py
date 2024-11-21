@@ -86,9 +86,14 @@ class Mamba(Module):
 
         self.config = config
 
-        self.layers = nn.ModuleList(
-            [ResidualBlockMamba(config) for _ in range(config.n_layers)]
-        )
+        # self.layers = nn.ModuleList(
+        #     [ResidualBlockMamba(config) for _ in range(config.n_layers)]
+        # )
+        # TODO verify if nn.ModuleList is needed, ie are the weights changing?
+        self.layers = []
+        for _ in range(config.n_layers):
+            self.layers.append(ResidualBlockMamba(config))
+
 
     def forward(self, x):
         # x : (B, L, D)
@@ -276,7 +281,9 @@ class MambaBlock(Module):
         _, L, _ = x.shape
 
         xz = self.in_proj(x)  # (B, L, 2*ED)
-        x, z = xz.chunk(2, dim=-1)  # (B, L, ED), (B, L, ED)
+        # x, z = xz.chunk(2, dim=-1)  # (B, L, ED), (B, L, ED)
+        # TODO check chunk
+        x, z = chunk(xz, 2, dim=-1) # (B, L, ED), (B, L, ED)
 
         # x branch
         x = x.transpose(1, 2)  # (B, ED, L)
@@ -453,7 +460,8 @@ class MambaBlock(Module):
         h, inputs = cache
 
         xz = self.in_proj(x)  # (B, 2*ED)
-        x, z = xz.chunk(2, dim=1)  # (B, ED), (B, ED)
+        # x, z = xz.chunk(2, dim=1)  # (B, ED), (B, ED)
+        x, z = chunk(xz, 2, dim=1)  # (B, ED), (B, ED)
 
         # x branch
         x_cache = x.unsqueeze(2)
@@ -576,3 +584,17 @@ class SiLu(Module):
 class Softplus(Module):
     def forward(self, x: Tensor) -> Tensor:
         return ops.log(1 + ops.exp(x))
+
+
+# TODO check chunk
+def chunk(tensor, num_chunks, dim):
+    # Calculate size of each chunk
+    chunk_size = tensor.shape[dim] // num_chunks
+    
+    # Ensure the dimension is divisible by the number of chunks
+    assert tensor.shape[dim] % num_chunks == 0, "Tensor cannot be evenly split"
+    
+    # Use split to divide the tensor
+    chunks = ops.split(tensor, axis=dim, size=chunk_size)
+    
+    return chunks
