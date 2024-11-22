@@ -37,6 +37,21 @@ def zeros(*shape, device=None, dtype="float32", requires_grad=False):
         *shape, c=0.0, device=device, dtype=dtype, requires_grad=requires_grad
     )
 
+def zeros_like(array, device=None, dtype=None, requires_grad=False):
+    """
+    Generate a tensor of zeros with the same shape as the input array.
+
+    Parameters:
+    - array: The input tensor.
+    - device: Optional device specification. Defaults to the same device as the input array.
+    - dtype: Optional data type. Defaults to the same data type as the input array.
+    - requires_grad: Whether to compute gradients for this tensor. Defaults to False.
+    """
+    device = device if device else array.device
+    dtype = dtype if dtype else array.dtype
+    return zeros(*array.shape, device=device, dtype=dtype, requires_grad=requires_grad)
+
+
 
 def randb(*shape, p=0.5, device=None, dtype="bool", requires_grad=False):
     """Generate binary random Tensor"""
