@@ -7,10 +7,12 @@ import sys
 import numpy as np
 
 sys.path.append("python/")
+import gc
 import time
 
 import needle as ndl
 import needle.nn as nn
+from needle.data.datasets.ptb_dataset import get_batch
 
 from apps.models import *
 
@@ -198,9 +200,49 @@ def epoch_general_ptb(
         avg_loss: average loss over dataset
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+
+    if opt:
+        model.train()
+        opt.reset_grad()
+    else:
+        model.eval()
+
+    nbatch, batch_size = data.shape
+    tot_num_batches = 0
+    tot_data = 0
+    tot_batch_loss = 0
+    tot_correct = 0
+
+    for i in range(0, nbatch - 1, seq_len):
+        if opt is not None:
+            opt.reset_grad()
+
+        batch_x, batch_y = get_batch(data, i, seq_len, device=device, dtype=dtype)
+
+        out, _ = model(batch_x)
+        logits = out.numpy()
+
+        l = loss_fn(out, batch_y)
+        correct = np.sum(logits.argmax(axis=1) != batch_y.numpy())
+
+        if opt is not None:
+            l.backward()
+            opt.step()
+            opt.reset_grad()
+
+        tot_batch_loss += l.numpy().item()
+        tot_num_batches += 1
+
+        tot_correct += correct
+        tot_data += batch_x.shape[0]
+
+        del out
+        del l
+        gc.collect()
+
+    avg_batch_loss = tot_batch_loss / tot_num_batches
+    avg_batch_acc = tot_correct / tot_data
+    return avg_batch_acc, avg_batch_loss
 
 
 def train_ptb(
@@ -235,9 +277,21 @@ def train_ptb(
         avg_loss: average loss over dataset from last epoch of training
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+
+    opt = optimizer(model.parameters(), lr=lr, weight_decay=weight_decay)
+    for e in range(n_epochs):
+        train_err, train_loss = epoch_general_ptb(
+            data,
+            model,
+            seq_len,
+            loss_fn(),
+            opt=opt,
+            clip=clip,
+            device=device,
+            dtype=dtype,
+        )
+
+    return train_err, train_loss
 
 
 def evaluate_ptb(
@@ -257,9 +311,10 @@ def evaluate_ptb(
         avg_loss: average loss over dataset
     """
     np.random.seed(4)
-    ### BEGIN YOUR SOLUTION
-    raise NotImplementedError()
-    ### END YOUR SOLUTION
+
+    return epoch_general_ptb(
+        data, model, seq_len, loss_fn=loss_fn(), opt=None, device=device, dtype=dtype
+    )
 
 
 ### CODE BELOW IS FOR ILLUSTRATION, YOU DO NOT NEED TO EDIT
