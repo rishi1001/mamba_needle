@@ -629,19 +629,14 @@ namespace needle
       /// END SOLUTION
     }
 
-    __global__ void PscanKernel(const scalar_t *a, scalar_t *x, size_t batch_size, size_t seqlen, size_t dim, size_t dstate)
+    __global__ void PscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t seqlen, size_t dim, size_t dstate)
     {
-      /**
-       * Still TODO (@saketram):
-       * [ ] currently assuming dstate = 1 (2D thread grid necessary)
-       * [ ] multiply a and x with pscan
-       * [ ] fix inputs/outputs; take a, x return new out array
-       * [ ] (stretch goal) fix bank conflicts
-       */
+      const size_t n = seqlen;
 
-      __shared__ scalar_t temp[];
+      __shared__ scalar_t temp_a[];
+      __shared__ scalar_t temp_x[];
 
-      // TODO: assume dstate = 1 for now; fix this later
+      // TODO: assume dstate = 1 for now; fix this later with gridded
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
 
@@ -649,8 +644,11 @@ namespace needle
       const int off = batch_id * seqlen * dim + dim_id * seqlen;
 
       // load data to shared memory
-      temp[2 * thid] = a[off + 2 * thid];
-      temp[2 * thid + 1] = a[off + 2 * thid + 1];
+      temp_a[2 * thid] = a[off + 2 * thid];
+      temp_a[2 * thid + 1] = a[off + 2 * thid + 1];
+
+      temp_x[2 * thid] = x[off + 2 * thid];
+      temp_x[2 * thid + 1] = x[off + 2 * thid + 1];
 
       // up sweep
       int offset = 1;
@@ -661,14 +659,17 @@ namespace needle
         {
           const int ai = offset * (2 * thid + 1) - 1;
           const int bi = offset * (2 * thid + 2) - 1;
-          temp[bi] += temp[ai];
+
+          // make_float2(ab1.x * ab0.x, ab1.x * ab0.y + ab1.y); from ssm cuda code
+          temp_x[bi] += temp_a[bi] * temp_x[ai];
+          temp_a[bi] *= temp_a[ai];
         }
         offset *= 2;
       }
 
       // clear last element
       if (thid == 0)
-        temp[n - 1] = 0;
+        temp_x[n - 1] = 0;
 
       // down sweep
       for (int d = 1; d < n; d *= 2)
@@ -681,25 +682,35 @@ namespace needle
           const int ai = offset * (2 * thid + 1) - 1;
           const int bi = offset * (2 * thid + 2) - 1;
 
-          const scalar_t t = temp[ai];
-          temp[ai] = temp[bi];
-          temp[bi] += t;
+          const scalar_t t_a = temp_a[ai];
+          const scalar_t t_x = temp_x[ai];
+
+          temp_a[ai] = temp_a[bi];
+          temp_x[ai] = temp_x[bi];
+
+          temp_a[bi] *= t_a;
+          temp_x[bi] += temp_a[bi] * t_x;
         }
       }
 
       __syncthreads();
 
-      // write back to global memory
-      x[off + 2 * thid] = temp[2 * thid];
-      x[off + 2 * thid + 1] = temp[2 * thid + 1];
+      // write back to global memory with inclusive prefix scan
+      out[off + 2 * thid] = temp_x[2 * thid + 1];
+      if (2 * thid + 2 < n)
+      {
+        out[off + 2 * thid + 1] = temp_x[2 * thid + 2];
+      }
+      else
+      {
+        out[off + 2 * thid + 1] = x[off + 2 * thid + 1] + a[off + 2 * thid + 1] * temp_x[2 * thid + 1];
+      }
     }
 
-    void Pscan(const CudaArray &a, CudaArray *x, std::vector<int32_t> shape, std::vector<int32_t> strides, size_t offset)
+    void Pscan(const CudaArray &a, CudaArray &x, CudaArray *out, std::vector<int32_t> shape)
     {
-      const bool is_variable_B = true;
-
       const int32_t batch_size = shape[0];
-      const int32_t dim = sizes[1];
+      const int32_t dim = shape[1];
       const int32_t seqlen = sizes[2];
       const int32_t dstate = sizes[3];
 
