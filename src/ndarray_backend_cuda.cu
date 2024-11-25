@@ -681,8 +681,8 @@ namespace needle
           const int ai = offset * (2 * thid + 1) - 1;
           const int bi = offset * (2 * thid + 2) - 1;
 
-          const scalar_t t_a = temp_a[ai];
-          const scalar_t t_x = temp_x[ai];
+          const scalar_t t_a = temp_a[threadIdx.y][ai];
+          const scalar_t t_x = temp_x[threadIdx.y][ai];
 
           temp_a[threadIdx.y][ai] = temp_a[threadIdx.y][bi];
           temp_x[threadIdx.y][ai] = temp_x[threadIdx.y][bi];
@@ -710,12 +710,12 @@ namespace needle
     {
       const int32_t batch_size = shape[0];
       const int32_t dim = shape[1];
-      const int32_t seqlen = sizes[2];
-      const int32_t dstate = sizes[3];
+      const int32_t seqlen = shape[2];
+      const int32_t dstate = shape[3];
 
       dim3 grid = dim3(batch_size, dim, 1);
       dim3 block = dim3(seqlen / 2, dstate, 1);
-      PscanKernel<<<dim.grid, dim.block>>>(a.ptr, x.ptr, out->ptr, out->size, batch_size, dim, seqlen, dstate);
+      PscanKernel<<<grid, block>>>(a.ptr, x.ptr, out->ptr, out->size, batch_size, dim, seqlen, dstate);
     }
 
   } // namespace cuda
