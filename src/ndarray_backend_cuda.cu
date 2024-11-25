@@ -633,22 +633,21 @@ namespace needle
     {
       const size_t n = seqlen;
 
-      __shared__ scalar_t temp_a[n];
-      __shared__ scalar_t temp_x[n];
+      __shared__ scalar_t temp_a[dstate][n];
+      __shared__ scalar_t temp_x[dstate][n];
 
-      // TODO: assume dstate = 1 for now; fix this later with gridded
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
 
       const int thid = threadIdx.x;
-      const int off = batch_id * dim * seqlen + dim_id * seqlen;
+      const int off = batch_id * dim * seqlen * dstate + dim_id * seqlen * dstate;
 
       // load data to shared memory
-      temp_a[2 * thid] = a[off + 2 * thid];
-      temp_a[2 * thid + 1] = a[off + 2 * thid + 1];
+      temp_a[threadIdx.y][2 * thid] = a[off + (2 * thid) * dstate + threadIdx.y];
+      temp_a[threadIdx.y][2 * thid + 1] = a[off + (2 * thid + 1) * dstate + threadIdx.y];
 
-      temp_x[2 * thid] = x[off + 2 * thid];
-      temp_x[2 * thid + 1] = x[off + 2 * thid + 1];
+      temp_x[threadIdx.y][2 * thid] = x[off + (2 * thid) * dstate + threadIdx.y];
+      temp_x[threadIdx.y][2 * thid + 1] = x[off + (2 * thid + 1) * dstate + threadIdx.y];
 
       // up sweep
       int offset = 1;
@@ -661,15 +660,15 @@ namespace needle
           const int bi = offset * (2 * thid + 2) - 1;
 
           // make_float2(ab1.x * ab0.x, ab1.x * ab0.y + ab1.y); from ssm cuda code
-          temp_x[bi] += temp_a[bi] * temp_x[ai];
-          temp_a[bi] *= temp_a[ai];
+          temp_x[threadIdx.y][bi] += temp_a[threadIdx.y][bi] * temp_x[threadIdx.y][ai];
+          temp_a[threadIdx.y][bi] *= temp_a[threadIdx.y][ai];
         }
         offset *= 2;
       }
 
       // clear last element
       if (thid == 0)
-        temp_x[n - 1] = 0;
+        temp_x[threadIdx.y][n - 1] = 0;
 
       // down sweep
       for (int d = 1; d < n; d *= 2)
@@ -685,25 +684,25 @@ namespace needle
           const scalar_t t_a = temp_a[ai];
           const scalar_t t_x = temp_x[ai];
 
-          temp_a[ai] = temp_a[bi];
-          temp_x[ai] = temp_x[bi];
+          temp_a[threadIdx.y][ai] = temp_a[threadIdx.y][bi];
+          temp_x[threadIdx.y][ai] = temp_x[threadIdx.y][bi];
 
-          temp_a[bi] *= t_a;
-          temp_x[bi] += temp_a[bi] * t_x;
+          temp_a[threadIdx.y][bi] *= t_a;
+          temp_x[threadIdx.y][bi] += temp_a[threadIdx.y][bi] * t_x;
         }
       }
 
       __syncthreads();
 
       // write back to global memory with inclusive prefix scan
-      out[off + 2 * thid] = temp_x[2 * thid + 1];
+      out[off + (2 * thid) * dstate + threadIdx.y] = temp_x[threadIdx.y][2 * thid + 1];
       if (2 * thid + 2 < n)
       {
-        out[off + 2 * thid + 1] = temp_x[2 * thid + 2];
+        out[off + (2 * thid + 1) * dstate + threadIdx.y] = temp_x[threadIdx.y][2 * thid + 2];
       }
       else
       {
-        out[off + 2 * thid + 1] = x[off + 2 * thid + 1] + a[off + 2 * thid + 1] * temp_x[2 * thid + 1];
+        out[off + (2 * thid + 1) * dstate + threadIdx.y] = x[off + (2 * thid + 1) * threadIdx.y] + a[off + (2 * thid + 1) * threadIdx.y] * temp_x[threadIdx.y][2 * thid + 1];
       }
     }
 
@@ -715,7 +714,7 @@ namespace needle
       const int32_t dstate = sizes[3];
 
       dim3 grid = dim3(batch_size, dim, 1);
-      dim3 block = dim3(seqlen / 2, 1, 1);
+      dim3 block = dim3(seqlen / 2, dstate, 1);
       PscanKernel<<<dim.grid, dim.block>>>(a.ptr, x.ptr, out->ptr, out->size, batch_size, dim, seqlen, dstate);
     }
 
@@ -789,4 +788,6 @@ PYBIND11_MODULE(ndarray_backend_cuda, m)
 
   m.def("reduce_max", ReduceMax);
   m.def("reduce_sum", ReduceSum);
+
+  m.def("pscan", Pscan);
 }
