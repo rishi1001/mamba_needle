@@ -50,6 +50,13 @@ def pad_npo2(X):
 
 
 class PScan(TensorOp):
+
+    # def __init__(self):
+    #     super().__init__()
+    #     self.A_in = None
+    #     self.X = None
+
+
     @staticmethod
     def pscan(A, X):
         # A : (B, D, L, N)
