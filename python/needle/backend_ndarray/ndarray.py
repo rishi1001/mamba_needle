@@ -674,6 +674,8 @@ class NDArray:
     def pscan(self, other):
         assert isinstance(other, NDArray)
         assert self.shape.len == 4
+        assert self.shape == other.shape
+
         B, D, L, N = self.shape
 
         out = NDArray.make(self.shape, device=self.device)
