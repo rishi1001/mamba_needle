@@ -440,7 +440,7 @@ class Tensor(Value):
                 result = normalize_index(idx, result.shape[axis - offset], axis - offset)(result)
             elif isinstance(idx, int):
                 normalized_idx = normalize_index(idx, result.shape[axis - offset], axis - offset)
-                result = needle.ops.Slice(normalized_idx, normalized_idx + 1, axis=axis - offset)(result)
+                result = needle.ops.StridedSlice(normalized_idx, normalized_idx + 1, 1, axis=axis - offset)(result)
                 result = needle.ops.Squeeze(axis=axis - offset)(result)
                 offset += 1
                 

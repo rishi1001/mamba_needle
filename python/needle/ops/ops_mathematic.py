@@ -828,5 +828,24 @@ class StridedSlice(TensorOp):
         idx[self.axis] = slice(self.start, self.end, self.stride)
         out[tuple(idx)] = out_grad
         return out
+    
+class Squeeze(TensorOp):
+    def __init__(self, axis: int):
+        self.axis = axis
+
+    def compute(self, a):
+        # return array_api.squeeze(a, axis=self.axis)
+        shape = list(a.shape)
+        assert shape[self.axis] == 1, f"Can't squeeze axis {self.axis} as it's not of size 1"
+        shape.pop(self.axis)
+        return array_api.reshape(a, shape)
+
+    def gradient(self, out_grad, node):
+        a = node.inputs[0]
+        # Get the original shape before squeeze
+        shape = list(a.shape)
+        # Insert 1 at the squeezed axis position
+        # For example, if shape was (3,1,4) and axis=1, we want to go back to (3,1,4)
+        return array_api.reshape(out_grad, shape)
 
 

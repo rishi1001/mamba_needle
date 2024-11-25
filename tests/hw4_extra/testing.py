@@ -58,7 +58,7 @@ if __name__ == "__main__":
     # breakpoint()
 
     # Perform slicing
-    y = x[1:, 0:2:1]  # Slice rows 1 to end, and columns 0 to end with step 2
+    y = x[1:, 2, 1]  # Slice rows 1 to end, and columns 0 to end with step 2
 
     print(y)
 
