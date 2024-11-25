@@ -1,12 +1,13 @@
 import math
 from typing import Union
 import needle as ndl
-from needle import Device, NDArray, Tensor, ops, nn, init
+from needle import Device, Tensor, ops, nn, init
 from .nn_basic import Module, Parameter, Linear
 from .nn_conv import Conv1d
 from .nn_sequence import Embedding
+from .nn_mamba import SiLu, RMSNorm
 
-class MambaConfig:
+class MambaConfigSeq:
     """
     Configuration class for the Mamba model as defined in
     https://arxiv.org/pdf/2312.00752
@@ -66,7 +67,7 @@ class SelectiveScanSeq(Module):
     Sequential implementation of selective scan
     """
 
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
 
@@ -176,12 +177,12 @@ class SelectiveScanSeq(Module):
         return y, h
 
 
-class SSMBlock(Module):
+class SSMBlockSeq(Module):
     """
     SSM block for the Mamba model
     """
 
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
 
@@ -223,7 +224,7 @@ class SSMBlock(Module):
         # self.A_log._no_weight_decay = True # no decay anyways
 
         # D "skip" parameter (dim_inner,)
-        self.D = nn.Parameter(init.ones(config.dim_inner, dtype=config.dtype,
+        self.D = Parameter(init.ones(config.dim_inner, dtype=config.dtype,
                                         device=config.device))
         # self.D._no_weight_decay = True # no decay anyways
 
@@ -329,13 +330,13 @@ class SSMBlock(Module):
         return dt, B, C
 
 
-class MambaBlock(nn.Module):
+class MambaBlockSeq(Module):
     """
     Mamba block for the Mamba model as described in Figure 3 of
     https://arxiv.org/pdf/2312.00752
     """
 
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
 
@@ -355,15 +356,15 @@ class MambaBlock(nn.Module):
                                 for _ in range(config.dim_inner)]
 
         # Activation function is SiLU/swish activation
-        self.activation = SiLU()
+        self.activation = SiLu()
 
         # SSM block
-        self.ssm = SSMBlock(config)
+        self.ssm = SSMBlockSeq(config)
 
         # Projects output from dim_inner (E*D) to dim_model (D)
-        self.output_proj = nn.Linear(config.dim_inner, config.dim_model,
-                                     bias=config.bias, device=config.device,
-                                     dtype=config.dtype)
+        self.output_proj = Linear(config.dim_inner, config.dim_model,
+                                  bias=config.bias, device=config.device,
+                                  dtype=config.dtype)
 
     def forward(self, x):
         """
@@ -458,15 +459,15 @@ class MambaBlock(nn.Module):
         return out, cache
 
 
-class ResidualBlock(nn.Module):
+class ResidualBlockSeq(Module):
     """
     Residual block for the Mamba model.
     """
 
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
-        self.layer = MambaBlock(config)
+        self.layer = MambaBlockSeq(config)
         self.norm = RMSNorm(config.dim_model, config.norm_eps,
                             device=config.device, dtype=config.dtype)
 
@@ -499,15 +500,15 @@ class ResidualBlock(nn.Module):
         return out, cache
 
 
-class Mamba(nn.Module):
+class MambaSeq(Module):
     """
     Main class for the Mamba model.
     """
 
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
-        self.layers = [ResidualBlock(config) for _ in range(config.num_layers)]
+        self.layers = [ResidualBlockSeq(config) for _ in range(config.num_layers)]
 
     def forward(self, x):
         """
@@ -539,38 +540,6 @@ class Mamba(nn.Module):
         return x, caches
 
 
-class RMSNorm(nn.Module):
-    def __init__(self, d_model: int, eps: float = 1e-5, use_mup: bool = False, 
-                 device: Device = None, dtype: Tensor.dtype = "float32"):
-        super().__init__()
-
-        self.use_mup = use_mup
-        self.eps = eps
-
-        # https://arxiv.org/abs/2404.05728, RMSNorm gains prevents muTransfer (section 4.2.3)
-        if not use_mup:
-            self.weight = Parameter(init.ones(d_model, device=device, dtype=dtype))
-
-    def forward(self, x):
-        output = x * ops.power_scalar(
-            ops.broadcast_to(
-                ops.reshape(
-                    ops.summation(
-                        ops.power_scalar(x, 2), 
-                        len(x.shape) - 1
-                    ), 
-                    x.shape[:-1] + (1,)
-                ), 
-                x.shape
-            ) / x.shape[-1] 
-            + self.eps, -0.5)
-
-        if not self.use_mup:
-            return output * self.weight
-        else:
-            return output
-
-
 class Softplus(Module):
     def __init__(self, beta=1.0, threshold=20.0):
         self.beta = beta
@@ -579,7 +548,3 @@ class Softplus(Module):
     def forward(self, x):
         return ops.softplus(x, beta=self.beta, threshold=self.threshold)
 
-
-class SiLU(Module):
-    def forward(self, x):
-        return ops.silu(x)
