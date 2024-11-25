@@ -629,19 +629,19 @@ namespace needle
       /// END SOLUTION
     }
 
-    __global__ void PscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t seqlen, size_t dim, size_t dstate)
+    __global__ void PscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t dim, size_t seqlen, size_t dstate)
     {
       const size_t n = seqlen;
 
-      __shared__ scalar_t temp_a[];
-      __shared__ scalar_t temp_x[];
+      __shared__ scalar_t temp_a[n];
+      __shared__ scalar_t temp_x[n];
 
       // TODO: assume dstate = 1 for now; fix this later with gridded
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
 
       const int thid = threadIdx.x;
-      const int off = batch_id * seqlen * dim + dim_id * seqlen;
+      const int off = batch_id * dim * seqlen + dim_id * seqlen;
 
       // load data to shared memory
       temp_a[2 * thid] = a[off + 2 * thid];
@@ -714,9 +714,9 @@ namespace needle
       const int32_t seqlen = sizes[2];
       const int32_t dstate = sizes[3];
 
-      CudaDims dim = CudaOneDim(out->size);
-      PscanKernel<<<dim.grid, dim.block>>>(a.ptr, out->ptr, out->size, VecToCuda(shape),
-                                           VecToCuda(strides), offset);
+      dim3 grid = dim3(batch_size, dim, 1);
+      dim3 block = dim3(seqlen / 2, 1, 1);
+      PscanKernel<<<dim.grid, dim.block>>>(a.ptr, x.ptr, out->ptr, out->size, batch_size, dim, seqlen, dstate);
     }
 
   } // namespace cuda
