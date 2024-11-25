@@ -631,11 +631,11 @@ namespace needle
 
     __global__ void PscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t dim, size_t seqlen, size_t dstate)
     {
-      extern __shared__ scalar_t shared_mem[];
+      extern __shared__ scalar_t *shared_mem[];
       const size_t n = seqlen;
 
-      scalar_t *temp_a = shared_mem;
-      scalar_t *temp_x = temp_a + dstate * n;
+      scalar_t **temp_a = shared_mem;
+      scalar_t **temp_x = temp_a + dstate * n;
 
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
