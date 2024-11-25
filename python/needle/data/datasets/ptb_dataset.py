@@ -1,7 +1,7 @@
 import os
 
 import numpy as np
-from needle import Tensor
+# from needle import Tensor
 from needle import backend_ndarray as nd
 
 

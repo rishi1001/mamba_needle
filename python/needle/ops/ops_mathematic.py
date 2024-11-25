@@ -805,3 +805,28 @@ class Squeeze(TensorOp):
 
 def squeeze(a, dim=None):
     return squeeze(dim)(a)
+
+class StridedSlice(TensorOp):
+    # takes index slice(1, None, None) as input
+    def __init__(self, start: int, end: Optional[int], stride: int, axis: int):
+        self.start = start
+        self.end = end
+        self.stride = stride
+        self.axis = axis
+
+    def compute(self, a):
+        idx = [slice(None)] * len(a.shape)
+        idx[self.axis] = slice(self.start, self.end, self.stride)
+        return a[tuple(idx)]
+    
+    def gradient(self, out_grad, node):
+        a = node.inputs[0]
+        out = array_api.full(a.shape, 0, device=a.device)
+        out = Tensor(out, device=a.device, requires_grad=True)
+        # out = array_api.full(a.shape, 0, device=a.device)
+        idx = [slice(None)] * len(a.shape)
+        idx[self.axis] = slice(self.start, self.end, self.stride)
+        out[tuple(idx)] = out_grad
+        return out
+
+
