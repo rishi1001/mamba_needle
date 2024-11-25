@@ -671,6 +671,17 @@ class NDArray:
         out[tuple(idxes)] = self
         return out
 
+    def pscan(self, other):
+        assert isinstance(other, NDArray)
+        assert self.shape.len == 4
+        B, D, L, N = self.shape
+
+        out = NDArray.make(self.shape, device=self.device)
+        self.device.pscan(
+            self.compact()._handle, other.compact()._handle, out._handle, B, D, L, N
+        )
+        return out
+
 
 def array(a, dtype="float32", device=None):
     """Convenience methods to match numpy a bit more closely."""

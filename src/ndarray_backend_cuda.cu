@@ -631,10 +631,11 @@ namespace needle
 
     __global__ void PscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t dim, size_t seqlen, size_t dstate)
     {
+      extern __shared__ scalar_t shared_mem[];
       const size_t n = seqlen;
 
-      __shared__ scalar_t temp_a[dstate][n];
-      __shared__ scalar_t temp_x[dstate][n];
+      scalar_t *temp_a = shared_mem;
+      scalar_t *temp_x = temp_a + dstate * n;
 
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
@@ -715,7 +716,8 @@ namespace needle
 
       dim3 grid = dim3(batch_size, dim, 1);
       dim3 block = dim3(seqlen / 2, dstate, 1);
-      PscanKernel<<<grid, block>>>(a.ptr, x.ptr, out->ptr, out->size, batch_size, dim, seqlen, dstate);
+      size_t shared_mem_size = 2 * dstate * seqlen * sizeof(scalar_t);
+      PscanKernel<<<grid, block, shared_mem_size>>>(a.ptr, x.ptr, out->ptr, batch_size, dim, seqlen, dstate);
     }
 
   } // namespace cuda
