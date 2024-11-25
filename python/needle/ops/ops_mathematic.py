@@ -847,5 +847,19 @@ class Squeeze(TensorOp):
         # Insert 1 at the squeezed axis position
         # For example, if shape was (3,1,4) and axis=1, we want to go back to (3,1,4)
         return array_api.reshape(out_grad, shape)
+    
+class Unsqueeze(TensorOp):
+    def __init__(self, axis: int):
+        self.axis = axis
+
+    def compute(self, a):
+        shape = list(a.shape)
+        shape.insert(self.axis, 1)
+        return array_api.reshape(a, shape)
+
+    def gradient(self, out_grad, node):
+        a = node.inputs[0]
+        shape = list(a.shape)
+        return array_api.reshape(out_grad, shape)
 
 
