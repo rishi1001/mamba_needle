@@ -1,6 +1,7 @@
 import math
 
 import needle as ndl
+import numpy as np
 
 
 def rand(*shape, low=0.0, high=1.0, device=None, dtype="float32", requires_grad=False):
@@ -67,3 +68,9 @@ def ones_like(array, *, device=None, requires_grad=False):
     return ones(
         *array.shape, dtype=array.dtype, device=device, requires_grad=requires_grad
     )
+
+
+def arange(*args, device=None, dtype="float32", requires_grad=False):
+    device = ndl.cpu() if device is None else device
+    array = np.arange(*args)
+    return ndl.Tensor(array, device=device, dtype=dtype, requires_grad=requires_grad)

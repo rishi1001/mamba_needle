@@ -685,3 +685,123 @@ class Concat(TensorOp):
 def concat(args, axis):
     return Concat(axis)(make_tuple(*args))
 
+class Softplus(TensorOp):
+    def __init__(self, beta: Optional[float] = 1.0, threshold: Optional[float] = 20.0):
+        self.beta = beta
+        self.threshold = threshold
+
+    def compute(self, A: NDArray):
+        ### BEGIN YOUR SOLUTION
+        below = (A * self.beta <= self.threshold) * array_api.log(1 + array_api.exp(self.beta * A)) / self.beta
+        above = (A * self.beta > self.threshold) * A
+        return below + above
+        ### END YOUR SOLUTION
+
+    def gradient(self, out_grad: Tensor, node: Tensor):
+        ### BEGIN YOUR SOLUTION
+        A = node.inputs[0]
+        below = Tensor((A.realize_cached_data() * self.beta <= self.threshold), device=A.device, dtype=A.dtype, requires_grad=False) * exp(self.beta * A) / (1 + exp(self.beta * A))
+        above = Tensor((A.realize_cached_data() * self.beta > self.threshold), device=A.device, dtype=A.dtype, requires_grad=False)
+        return (below + above) * out_grad
+        ### END YOUR SOLUTION
+
+
+def softplus(a, beta=1.0, threshold=20.0):
+    return Softplus(beta, threshold)(a)
+
+
+class Clamp(TensorOp):
+    def __init__(self, minimum: Optional[float] = None, maximum: Optional[float] = None):
+        self.minimum = minimum
+        self.maximum = maximum
+
+    def compute(self, A: NDArray):
+        ### BEGIN YOUR SOLUTION
+        if self.minimum is not None:
+            A = A * (A >= self.minimum)
+            A = A + ((A < self.minimum) * self.minimum)
+        if self.maximum is not None:
+            A = A * (A <= self.maximum)
+            A = A + ((A > self.maximum) * self.maximum)
+        return A
+        ### END YOUR SOLUTION
+
+    def gradient(self, out_grad: Tensor, node: Tensor):
+        ### BEGIN YOUR SOLUTION
+        A = node.inputs[0]
+        if self.minimum is not None:
+            out_grad = out_grad * Tensor((A.realize_cached_data() >= self.minimum), device=A.device, dtype=A.dtype, requires_grad=False)
+        if self.maximum is not None:
+            out_grad = out_grad * Tensor((A.realize_cached_data() <= self.maximum), device=A.device, dtype=A.dtype, requires_grad=False)
+        return out_grad
+        ### END YOUR SOLUTION
+
+
+def clamp(a, minimum=None, maximum=None):
+    return Clamp(minimum, maximum)(a)
+
+
+class SiLU(TensorOp):
+    def compute(self, A: NDArray):
+        ### BEGIN YOUR SOLUTION
+        return A / (1 + array_api.exp(-A))
+        ### END YOUR SOLUTION
+
+    def gradient(self, out_grad: Tensor, node: Tensor):
+        ### BEGIN YOUR SOLUTION
+        A = node.inputs[0]
+        return (exp(-A) * (A + 1) + 1) / power_scalar((1 + exp(-A)), 2)
+        ### END YOUR SOLUTION
+
+
+def silu(a):
+    return SiLU()(a)
+
+
+class Unsqueeze(TensorOp):
+    def __init__(self, dim: int):
+        self.dim = dim
+    
+    def compute(self, A: NDArray):
+        ### BEGIN YOUR SOLUTION
+        assert self.dim >= 0
+        assert self.dim <= len(A.shape)
+        new_shape = list(A.shape)
+        new_shape.insert(self.dim, 1)
+        return A.compact().reshape(new_shape)
+        ### END YOUR SOLUTION
+    
+    def gradient(self, out_grad: Tensor, node: Tensor):
+        ### BEGIN YOUR SOLUTION
+        return squeeze(out_grad, dim=self.dim)
+        ### END YOUR SOLUTION
+
+
+def unsqueeze(a, dim):
+    return Unsqueeze(dim)(a)
+
+
+class Squeeze(TensorOp):
+    def __init__(self, dim: Optional[int]):
+        self.dim = dim
+    
+    def compute(self, A: NDArray):
+        ### BEGIN YOUR SOLUTION
+        assert self.dim == None or A.shape[self.dim] == 1
+        new_shape = list(A.shape)
+        if self.dim == None:
+            new_shape = [s for s in new_shape if s != 1]
+        else:
+            new_shape.pop(self.dim)
+        return A.compact().reshape(new_shape)
+        ### END YOUR SOLUTION
+    
+    def gradient(self, out_grad: Tensor, node: Tensor):
+        ### BEGIN YOUR SOLUTION
+        A = node.inputs[0]
+        return reshape(out_grad, A.shape)
+        ### END YOUR SOLUTION
+
+
+def squeeze(a, dim=None):
+    return squeeze(dim)(a)
