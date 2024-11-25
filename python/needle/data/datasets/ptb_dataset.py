@@ -121,9 +121,7 @@ def get_batch(batches, i, bptt, device=None, dtype=None):
     seq_len = min(bptt, nbatch - 1 - i)
     data = batches[i : i + seq_len]
     target = batches[i + 1 : i + 1 + seq_len]
-
     from needle import Tensor
-
     data = Tensor(data, device=device, dtype=dtype)
     target = Tensor(target.flatten(), device=device, dtype=dtype)
     return data, target

@@ -5,7 +5,7 @@ from typing import List, Union
 import needle.backend_ndarray.ndarray as ndarray
 import needle.init as init
 import numpy as np
-from mambapy.pscan import pscan
+# from mambapy.pscan import pscan
 from needle import ops
 from needle.autograd import Tensor
 
@@ -378,7 +378,7 @@ class MambaBlock(Module):
 
         BX = deltaB * (x.unsqueeze(-1))  # (B, L, ED, N)
 
-        hs = pscan(deltaA, BX)
+        hs = ops.pscan(deltaA, BX)
 
         y = (hs @ C.unsqueeze(-1)).squeeze(
             3

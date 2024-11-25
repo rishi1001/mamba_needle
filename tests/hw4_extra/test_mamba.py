@@ -2,6 +2,7 @@ import sys
 
 sys.path.append("./python")
 sys.path.append("./apps")
+sys.path.append("./")
 import itertools
 import os
 
@@ -96,12 +97,19 @@ from simple_ml import *
 
 import needle as ndl
 sys.path.append('./apps')
-from models import LanguageModel
+from models import MambaLM, MambaLMConfig
 from simple_ml import train_ptb, evaluate_ptb
 
-device = ndl.cuda()
+# device = ndl.cuda()
+device = ndl.cpu()
 corpus = ndl.data.Corpus("data/ptb")
 train_data = ndl.data.batchify(corpus.train, batch_size=256, device=device, dtype="float32")
-model = LanguageModel(20, len(corpus.dictionary), hidden_size=32, num_layers=1, seq_model='transformer', seq_len=20, device=device)
+breakpoint()
+
+config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))
+model = MambaLM(config).to(device)
+
+# model = LanguageModel(20, len(corpus.dictionary), hidden_size=32, num_layers=1, seq_model='transformer', seq_len=20, device=device)
+
 train_ptb(model, train_data, seq_len=20, n_epochs=10, device=device, lr=0.003, optimizer=ndl.optim.Adam)
 evaluate_ptb(model, train_data, seq_len=20, device=device)
