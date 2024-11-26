@@ -631,10 +631,11 @@ class Conv1d(TensorOp):
         )
         r = transpose(r, axes=(0, 1))
         return l, r
-    
+
 
 def conv1d(a, b, stride=1, padding=1):
     return Conv1d(stride, padding)(a, b)
+
 
 # TODO check concat
 class Concat(TensorOp):
@@ -655,8 +656,14 @@ class Concat(TensorOp):
 
         # Check shape compatibility
         for i in range(1, len(arrays)):
-            if any(s != t for j, (s, t) in enumerate(zip(arrays[0].shape, arrays[i].shape)) if j != self.axis):
-                raise ValueError("Shape mismatch: Tensors must have the same shape except along the concatenation axis.")
+            if any(
+                s != t
+                for j, (s, t) in enumerate(zip(arrays[0].shape, arrays[i].shape))
+                if j != self.axis
+            ):
+                raise ValueError(
+                    "Shape mismatch: Tensors must have the same shape except along the concatenation axis."
+                )
 
         # Compute the shape of the output tensor
         concat_size = sum(array.shape[self.axis] for array in arrays)
@@ -685,6 +692,7 @@ class Concat(TensorOp):
 def concat(args, axis):
     return Concat(axis)(make_tuple(*args))
 
+
 class Softplus(TensorOp):
     def __init__(self, beta: Optional[float] = 1.0, threshold: Optional[float] = 20.0):
         self.beta = beta
@@ -692,7 +700,11 @@ class Softplus(TensorOp):
 
     def compute(self, A: NDArray):
         ### BEGIN YOUR SOLUTION
-        below = (A * self.beta <= self.threshold) * array_api.log(1 + array_api.exp(self.beta * A)) / self.beta
+        below = (
+            (A * self.beta <= self.threshold)
+            * array_api.log(1 + array_api.exp(self.beta * A))
+            / self.beta
+        )
         above = (A * self.beta > self.threshold) * A
         return below + above
         ### END YOUR SOLUTION
@@ -700,8 +712,22 @@ class Softplus(TensorOp):
     def gradient(self, out_grad: Tensor, node: Tensor):
         ### BEGIN YOUR SOLUTION
         A = node.inputs[0]
-        below = Tensor((A.realize_cached_data() * self.beta <= self.threshold), device=A.device, dtype=A.dtype, requires_grad=False) * exp(self.beta * A) / (1 + exp(self.beta * A))
-        above = Tensor((A.realize_cached_data() * self.beta > self.threshold), device=A.device, dtype=A.dtype, requires_grad=False)
+        below = (
+            Tensor(
+                (A.realize_cached_data() * self.beta <= self.threshold),
+                device=A.device,
+                dtype=A.dtype,
+                requires_grad=False,
+            )
+            * exp(self.beta * A)
+            / (1 + exp(self.beta * A))
+        )
+        above = Tensor(
+            (A.realize_cached_data() * self.beta > self.threshold),
+            device=A.device,
+            dtype=A.dtype,
+            requires_grad=False,
+        )
         return (below + above) * out_grad
         ### END YOUR SOLUTION
 
@@ -711,7 +737,9 @@ def softplus(a, beta=1.0, threshold=20.0):
 
 
 class Clamp(TensorOp):
-    def __init__(self, minimum: Optional[float] = None, maximum: Optional[float] = None):
+    def __init__(
+        self, minimum: Optional[float] = None, maximum: Optional[float] = None
+    ):
         self.minimum = minimum
         self.maximum = maximum
 
@@ -730,16 +758,25 @@ class Clamp(TensorOp):
         ### BEGIN YOUR SOLUTION
         A = node.inputs[0]
         if self.minimum is not None:
-            out_grad = out_grad * Tensor((A.realize_cached_data() >= self.minimum), device=A.device, dtype=A.dtype, requires_grad=False)
+            out_grad = out_grad * Tensor(
+                (A.realize_cached_data() >= self.minimum),
+                device=A.device,
+                dtype=A.dtype,
+                requires_grad=False,
+            )
         if self.maximum is not None:
-            out_grad = out_grad * Tensor((A.realize_cached_data() <= self.maximum), device=A.device, dtype=A.dtype, requires_grad=False)
+            out_grad = out_grad * Tensor(
+                (A.realize_cached_data() <= self.maximum),
+                device=A.device,
+                dtype=A.dtype,
+                requires_grad=False,
+            )
         return out_grad
         ### END YOUR SOLUTION
 
 
 def clamp(a, minimum=None, maximum=None):
     return Clamp(minimum, maximum)(a)
-
 
 
 class StridedSlice(TensorOp):
@@ -754,7 +791,7 @@ class StridedSlice(TensorOp):
         idx = [slice(None)] * len(a.shape)
         idx[self.axis] = slice(self.start, self.end, self.stride)
         return a[tuple(idx)]
-    
+
     def gradient(self, out_grad, node):
         a = node.inputs[0]
         out = array_api.full(a.shape, 0, device=a.device)
@@ -764,7 +801,8 @@ class StridedSlice(TensorOp):
         idx[self.axis] = slice(self.start, self.end, self.stride)
         out[tuple(idx)] = out_grad
         return out
-    
+
+
 class Squeeze(TensorOp):
     def __init__(self, axis: int):
         self.axis = axis
@@ -772,7 +810,9 @@ class Squeeze(TensorOp):
     def compute(self, a):
         # return array_api.squeeze(a, axis=self.axis)
         shape = list(a.shape)
-        assert shape[self.axis] == 1, f"Can't squeeze axis {self.axis} as it's not of size 1"
+        assert (
+            shape[self.axis] == 1
+        ), f"Can't squeeze axis {self.axis} as it's not of size 1"
         shape.pop(self.axis)
         return array_api.reshape(a, shape)
 
@@ -783,7 +823,8 @@ class Squeeze(TensorOp):
         # Insert 1 at the squeezed axis position
         # For example, if shape was (3,1,4) and axis=1, we want to go back to (3,1,4)
         return array_api.reshape(out_grad, shape)
-    
+
+
 class Unsqueeze(TensorOp):
     def __init__(self, axis: int):
         self.axis = axis
@@ -797,8 +838,6 @@ class Unsqueeze(TensorOp):
         a = node.inputs[0]
         shape = list(a.shape)
         return array_api.reshape(out_grad, shape)
-
-
 def squeeze(a, axis):
     return Squeeze(axis)(a)
 
