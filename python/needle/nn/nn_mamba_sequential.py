@@ -1,11 +1,12 @@
 import math
-from typing import Union
+from typing import Union, Optional
 import needle as ndl
-from needle import Device, Tensor, ops, nn, init
+#from needle import Device, Tensor, ops, init
+import needle.init as init
+from needle import ops
 from .nn_basic import Module, Parameter, Linear
-from .nn_conv import Conv1d
-from .nn_sequence import Embedding
-from .nn_mamba import SiLu, RMSNorm
+from .nn_conv import Conv1dPad
+from .nn_mamba import SiLu
 
 class MambaConfigSeq:
     """
@@ -42,8 +43,8 @@ class MambaConfigSeq:
     mup_base_width: float = 128           # Base width
 
     # Device and datatype
-    device: Device = ndl.cpu()
-    dtype: Tensor.dtype = "float32"
+    device = None
+    dtype = "float32"
 
     def __init__(self, **kwargs):
         self.__dict__.update(kwargs)
@@ -87,6 +88,8 @@ class SelectiveScanSeq(Module):
 
         batch_size, seq_length, dim_inner = x.shape
         _, dim_state = A.shape
+        assert dim_inner == self.config.dim_inner
+        assert dim_state == self.config.dim_state
 
         # Calculate dA (B, L, E*D, N)
         dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (dim_state,))
@@ -100,8 +103,8 @@ class SelectiveScanSeq(Module):
         dB_x = dB * ops.broadcast_to(ops.unsqueeze(x, 3), x.shape + (dim_state,))
 
         # Initialize h (B, E*D, N)
-        h = init.zeros(batch_size, self.config.dim_inner, self.config.dim_state,
-                       device=self.config.device)
+        h = init.zeros(batch_size, dim_inner, dim_state,
+                       device=self.config.device, dtype=self.config.dtype)
         hs = []
 
         # Sequential (RNN) approach involves iteration over length of sequence
@@ -143,8 +146,11 @@ class SelectiveScanSeq(Module):
         Output tensor of shape (B, E*D)
         Updated hidden state tensor of shape (B, E*D, N)
         """
+
         batch_size, dim_inner = x.shape
         _, dim_state = A.shape
+        assert dim_inner == self.config.dim_inner
+        assert dim_state == self.config.dim_state
 
         # Calculate dA (B, E*D, N)
         dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 2), dt.shape + (dim_state,))
@@ -159,7 +165,8 @@ class SelectiveScanSeq(Module):
 
         # initialize h
         if h is None:
-            h = init.zeros(batch_size, dim_inner, dim_state, device=self.config.device) # (B, E*D, N)
+            h = init.zeros(batch_size, dim_inner, dim_state, 
+                           device=self.config.device, dtype=self.config.dtype) # (B, E*D, N)
 
         # SSM equation 1a/2a (Section 2 of paper)
         h = dA * h + dB_x # (B, E*D, N)
@@ -232,15 +239,9 @@ class SSMBlockSeq(Module):
 
         # Optional Layernorms
         if self.config.inner_layernorms:
-            self.dt_layernorm = RMSNorm(
-                self.config.dt_rank, config.norm_eps, config.mup, device=config.device, dtype=config.dtype
-            )
-            self.B_layernorm = RMSNorm(
-                self.config.dim_state, config.norm_eps, config.mup, device=config.device, dtype=config.dtype
-            )
-            self.C_layernorm = RMSNorm(
-                self.config.dim_state, config.norm_eps, config.mup, device=config.device, dtype=config.dtype
-            )
+            self.dt_layernorm = RMSNorm(config, config.dt_rank)
+            self.B_layernorm = RMSNorm(config, config.dim_state)
+            self.C_layernorm = RMSNorm(config, config.dim_state)
         else:
             self.dt_layernorm = None
             self.B_layernorm = None
@@ -254,6 +255,9 @@ class SSMBlockSeq(Module):
         Returns:
         Output tensor of shape (B, L, E*D)
         """
+
+        batch_size, seq_length, dim_inner = x.shape
+        assert dim_inner == self.config.dim_inner
 
         # Define A
         A = -ops.exp(self.A_log)
@@ -293,6 +297,10 @@ class SSMBlockSeq(Module):
         Updated hidden state tensor of shape (B, E*D, N)
         """
 
+        batch_size, dim_inner, dim_state = h.shape
+        assert dim_inner == self.config.dim_inner
+        assert dim_state == self.config.dim_state
+
         # Define A
         A = -ops.exp(self.A_log)
 
@@ -303,8 +311,8 @@ class SSMBlockSeq(Module):
         dt_B_C = self.x_proj(x)
         dt_B_C_list = ops.split(dt_B_C, 1)
         dt = ops.stack(dt_B_C_list[:self.config.dt_rank], 1)
-        B = ops.stack(dt_B_C_list[self.config.dt_rank:self.config.dt_rank+self.config.dim_state], 1)
-        C = ops.stack(dt_B_C_list[self.config.dt_rank+self.config.dim_state:], 1)
+        B = ops.stack(dt_B_C_list[self.config.dt_rank:self.config.dt_rank+dim_state], 1)
+        C = ops.stack(dt_B_C_list[self.config.dt_rank+dim_state:], 1)
 
         # Apply layer norms
         dt, B, C = self._apply_layernorms(dt, B, C)
@@ -351,8 +359,8 @@ class MambaBlockSeq(Module):
                            padding=config.dim_conv-1, groups=config.dim_inner,
                            bias=config.conv_bias, device=config.device, dtype=config.dtype)
         """
-        self.conv_grouped = [Conv1d(1, 1, config.dim_conv, padding=config.dim_conv-1, groups=config.dim_inner,
-                                    bias=config.conv_bias, device=config.device, dtype=config.dtype) 
+        self.conv_grouped = [Conv1dPad(1, 1, config.dim_conv, padding=config.dim_conv-1,
+                                       bias=config.conv_bias, device=config.device, dtype=config.dtype) 
                                 for _ in range(config.dim_inner)]
 
         # Activation function is SiLU/swish activation
@@ -374,7 +382,9 @@ class MambaBlockSeq(Module):
         Returns:
         Output tensor of shape (B, L, D)
         """
+
         batch_size, seq_length, dim_model = x.shape
+        assert dim_model == self.config.dim_model
 
         # Splits input into 2 (B, L, E*D) Tensors for skip connection
         x_skip = ops.stack([self.input_proj(s) for s in ops.split(x, 0)], 0)
@@ -416,15 +426,20 @@ class MambaBlockSeq(Module):
         Updated cache
         """
 
+        batch_size, dim_model = x.shape
         h, inputs = cache
-        batch_size, dim_inner, dim_model = h
-        _, _, dim_conv_minus_1 = inputs
+        _, dim_inner, dim_state = h.shape
+        _, _, dim_conv_minus_1 = inputs.shape
+        assert dim_model == self.config.dim_model
+        assert dim_inner == self.config.dim_inner
+        assert dim_state == self.config.dim_state
+        assert dim_conv_minus_1 == self.config.dim_conv - 1
 
         # Splits input into 2 (B, E*D) Tensors for skip connection
         x_skip = self.input_proj(x)
         x_skip_list = ops.split(x_skip, 1)
-        x = ops.stack(x_skip_list[:self.config.dim_inner], 1)
-        skip = ops.stack(x_skip_list[self.config.dim_inner:], 1)
+        x = ops.stack(x_skip_list[:dim_inner], 1)
+        skip = ops.stack(x_skip_list[dim_inner:], 1)
 
         # Convolution step (B, E*D)
         #x = self.conv(torch.cat([inputs, x_cache], dim=2))[:,:,self.config.dim_conv-1]
@@ -468,8 +483,7 @@ class ResidualBlockSeq(Module):
         super().__init__()
         self.config = config
         self.layer = MambaBlockSeq(config)
-        self.norm = RMSNorm(config.dim_model, config.norm_eps,
-                            device=config.device, dtype=config.dtype)
+        self.norm = RMSNorm(config, config.dim_model)
 
     def forward(self, x):
         """
@@ -479,6 +493,9 @@ class ResidualBlockSeq(Module):
         Returns:
         Output tensor of shape (B, L, D)
         """
+
+        batch_size, seq_length, dim_model = x.shape
+        assert dim_model == self.config.dim_model
 
         out = x + self.layer(self.norm(x))
         return out
@@ -494,6 +511,15 @@ class ResidualBlockSeq(Module):
         Output tensor of shape (B, L, D)
         Updated cache
         """
+
+        batch_size, seq_length, dim_model = x.shape
+        h, inputs = cache
+        _, dim_inner, dim_state = h.shape
+        _, _, dim_conv_minus_1 = inputs.shape
+        assert dim_model == self.config.dim_model
+        assert dim_inner == self.config.dim_inner
+        assert dim_state == self.config.dim_state
+        assert dim_conv_minus_1 == self.config.dim_conv - 1
 
         out, cache = self.layer.step(self.norm(x), cache)
         out = x + out
@@ -519,6 +545,9 @@ class MambaSeq(Module):
         Output tensor of shape (B, L, D)
         """
 
+        batch_size, seq_length, dim_model = x.shape
+        assert dim_model == self.config.dim_model
+
         out = x
         for layer in self.layers:
             out = layer(x)
@@ -535,9 +564,57 @@ class MambaSeq(Module):
         Updated caches list
         """
 
+        batch_size, seq_length, dim_model = x.shape
+        assert dim_model == self.config.dim_model
+
         for i, layer in enumerate(self.layers):
             x, caches[i] = layer.step(x, caches[i])
         return x, caches
+
+
+class RMSNorm(Module):
+    def __init__(self, config: MambaConfigSeq, last_dim: int):
+        super().__init__()
+        self.use_mup = config.mup
+        self.eps = config.norm_eps
+
+        # https://arxiv.org/abs/2404.05728, RMSNorm gains prevents muTransfer (section 4.2.3)
+        if not self.use_mup:
+            self.weight = Parameter(init.ones(last_dim, device=config.device, 
+                                              dtype=config.dtype, requires_grad=True))
+
+    def forward(self, x):
+        # output = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+        last_dim = x.shape[0]
+        print(x.shape)
+        print(ops.summation(ops.power_scalar(x, 2), len(x.shape) - 1).shape)
+        output = x * ops.power_scalar(
+            ops.broadcast_to(
+                ops.reshape(
+                    ops.summation(
+                        ops.power_scalar(x, 2), 
+                        len(x.shape) - 1
+                    ), 
+                    x.shape[:-1] + (1,)
+                ),
+                x.shape
+            ) + self.eps, 
+            -0.5
+        )
+
+        print(x.shape)
+        print(output.shape)
+        print(self.weight.shape)
+        if not self.use_mup:
+            return output * ops.broadcast_to(
+                ops.reshape(
+                    self.weight, 
+                    tuple([1 for _ in x.shape[:-1]])+ (last_dim,)
+                ), 
+                x.shape
+            )
+        else:
+            return output
 
 
 class Softplus(Module):

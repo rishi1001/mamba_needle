@@ -799,3 +799,8 @@ class Unsqueeze(TensorOp):
         return array_api.reshape(out_grad, shape)
 
 
+def squeeze(a, axis):
+    return Squeeze(axis)(a)
+
+def unsqueeze(a, axis):
+    return Unsqueeze(axis)(a)

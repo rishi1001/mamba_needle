@@ -162,3 +162,72 @@ class Conv1d(Module):
         return ops.transpose(out, axes=(1, 2))
 
         ### END YOURSOLUTION
+
+
+class Conv1dPad(Module):
+    def __init__(
+        self,
+        in_channels,
+        out_channels,
+        kernel_size,
+        stride=1,
+        padding=0,
+        bias=True,
+        device=None,
+        dtype="float32",
+    ):
+        super().__init__()
+        if isinstance(kernel_size, tuple):
+            kernel_size = kernel_size[0]
+        if isinstance(stride, tuple):
+            stride = stride[0]
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        self.kernel_size = kernel_size
+        self.stride = stride
+
+        ### BEGIN YOUR SOLUTION
+        self.weight = Parameter(
+            init.kaiming_uniform(
+                in_channels * kernel_size, out_channels * kernel_size, shape=(kernel_size, in_channels, out_channels), device=device
+            )
+        )
+        if bias:
+            bound = 1 / (math.sqrt(in_channels * kernel_size))
+            self.bias = Parameter(
+                init.rand(
+                    out_channels,
+                    low=-1 * bound,
+                    high=bound,
+                    device=device,
+                )
+            )
+        else:
+            self.bias = init.zeros(out_channels, device=device)
+        self.padding = padding
+        ### END YOUR SOLUTION
+
+    def forward(self, x: Tensor) -> Tensor:
+        ### BEGIN YOUR SOLUTION
+        K = self.kernel_size
+
+        # NCH -> NHC
+        x = ops.transpose(x, axes=(1, 2))
+
+        # H_out = ((H+2P-K)//self.stride) + 1
+        # W_out = ((W+2P-K)//self.stride) + 1
+
+        out = ops.conv1d(x, self.weight, stride=self.stride, padding=self.padding)
+        bias = ops.broadcast_to(
+            ops.reshape(self.bias, (1, 1, self.out_channels)),
+            out.shape,
+        )
+
+        if bias is not None:
+            out += bias
+
+        # NHC -> NCH
+        return ops.transpose(out, axes=(1, 2))
+
+        ### END YOUR SOLUTION
+

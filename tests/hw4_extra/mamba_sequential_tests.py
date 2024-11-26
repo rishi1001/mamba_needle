@@ -1,19 +1,17 @@
 import sys
-
 sys.path.append("./python")
 sys.path.append("./apps")
-import itertools
-import os
-
+sys.path.append("./")
+import numpy as np
 import needle as ndl
 import needle.nn as nn
-import numpy as np
-from models import LanguageModel
+from needle.nn import MambaConfigSeq, MambaSeq
 from simple_ml import train_ptb, evaluate_ptb
 
-device = ndl.cuda()
+device = ndl.cpu()
 corpus = ndl.data.Corpus("data/ptb")
 train_data = ndl.data.batchify(corpus.train, batch_size=256, device=device, dtype="float32")
-model = LanguageModel(20, len(corpus.dictionary), hidden_size=32, num_layers=1, seq_model='transformer', seq_len=20, device=device)
+config = MambaConfigSeq(dim_model=28, num_layers=3, dim_state=12, device=device)
+model = MambaSeq(config)
 train_ptb(model, train_data, seq_len=20, n_epochs=10, device=device, lr=0.003, optimizer=ndl.optim.Adam)
 evaluate_ptb(model, train_data, seq_len=20, device=device)
