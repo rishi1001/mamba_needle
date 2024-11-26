@@ -634,11 +634,9 @@ namespace needle
       extern __shared__ scalar_t shared_mem[];
       const size_t n = seqlen;
 
-      // scalar_t **temp_a = shared_mem;
-      // scalar_t **temp_x = temp_a + dstate * n;
-
-      float(*temp_a)[2] = (float(*)[2])sharedMemory;
-      float(*temp_a)[2] = (float(*)[2])(sharedMemory + dstate * n);
+      // Correct allocation of temp_a and temp_x within shared memory
+      scalar_t *temp_a = shared_mem;          // temp_a[0..dstate*n -1]
+      scalar_t *temp_x = temp_a + dstate * n; // temp_x[0..dstate*n -1]
 
       const int batch_id = blockIdx.x;
       const int dim_id = blockIdx.y;
@@ -646,14 +644,14 @@ namespace needle
       const int thid = threadIdx.x;
       const int off = batch_id * dim * seqlen * dstate + dim_id * seqlen * dstate;
 
-      // load data to shared memory
-      temp_a[threadIdx.y][2 * thid] = a[off + (2 * thid) * dstate + threadIdx.y];
-      temp_a[threadIdx.y][2 * thid + 1] = a[off + (2 * thid + 1) * dstate + threadIdx.y];
+      // Load data into shared memory with correct indexing
+      temp_a[threadIdx.y * n + 2 * thid] = a[off + (2 * thid) * dstate + threadIdx.y];
+      temp_a[threadIdx.y * n + 2 * thid + 1] = a[off + (2 * thid + 1) * dstate + threadIdx.y];
 
-      temp_x[threadIdx.y][2 * thid] = x[off + (2 * thid) * dstate + threadIdx.y];
-      temp_x[threadIdx.y][2 * thid + 1] = x[off + (2 * thid + 1) * dstate + threadIdx.y];
+      temp_x[threadIdx.y * n + 2 * thid] = x[off + (2 * thid) * dstate + threadIdx.y];
+      temp_x[threadIdx.y * n + 2 * thid + 1] = x[off + (2 * thid + 1) * dstate + threadIdx.y];
 
-      // up sweep
+      // Up sweep phase
       int offset = 1;
       for (int d = n >> 1; d > 0; d >>= 1)
       {
@@ -663,18 +661,17 @@ namespace needle
           const int ai = offset * (2 * thid + 1) - 1;
           const int bi = offset * (2 * thid + 2) - 1;
 
-          // make_float2(ab1.x * ab0.x, ab1.x * ab0.y + ab1.y); from ssm cuda code
-          temp_x[threadIdx.y][bi] += temp_a[threadIdx.y][bi] * temp_x[threadIdx.y][ai];
-          temp_a[threadIdx.y][bi] *= temp_a[threadIdx.y][ai];
+          temp_x[threadIdx.y * n + bi] += temp_a[threadIdx.y * n + bi] * temp_x[threadIdx.y * n + ai];
+          temp_a[threadIdx.y * n + bi] *= temp_a[threadIdx.y * n + ai];
         }
         offset *= 2;
       }
 
-      // clear last element
+      // Clear the last element
       if (thid == 0)
-        temp_x[threadIdx.y][n - 1] = 0;
+        temp_x[threadIdx.y * n + n - 1] = 0;
 
-      // down sweep
+      // Down sweep phase
       for (int d = 1; d < n; d *= 2)
       {
         offset >>= 1;
@@ -685,28 +682,28 @@ namespace needle
           const int ai = offset * (2 * thid + 1) - 1;
           const int bi = offset * (2 * thid + 2) - 1;
 
-          const scalar_t t_a = temp_a[threadIdx.y][ai];
-          const scalar_t t_x = temp_x[threadIdx.y][ai];
+          const scalar_t t_a = temp_a[threadIdx.y * n + ai];
+          const scalar_t t_x = temp_x[threadIdx.y * n + ai];
 
-          temp_a[threadIdx.y][ai] = temp_a[threadIdx.y][bi];
-          temp_x[threadIdx.y][ai] = temp_x[threadIdx.y][bi];
+          temp_a[threadIdx.y * n + ai] = temp_a[threadIdx.y * n + bi];
+          temp_x[threadIdx.y * n + ai] = temp_x[threadIdx.y * n + bi];
 
-          temp_a[threadIdx.y][bi] *= t_a;
-          temp_x[threadIdx.y][bi] += temp_a[threadIdx.y][bi] * t_x;
+          temp_a[threadIdx.y * n + bi] *= t_a;
+          temp_x[threadIdx.y * n + bi] += temp_a[threadIdx.y * n + bi] * t_x;
         }
       }
 
       __syncthreads();
 
-      // write back to global memory with inclusive prefix scan
-      out[off + (2 * thid) * dstate + threadIdx.y] = temp_x[threadIdx.y][2 * thid + 1];
+      // Write back to global memory with inclusive prefix scan
+      out[off + (2 * thid) * dstate + threadIdx.y] = temp_x[threadIdx.y * n + 2 * thid + 1];
       if (2 * thid + 2 < n)
       {
-        out[off + (2 * thid + 1) * dstate + threadIdx.y] = temp_x[threadIdx.y][2 * thid + 2];
+        out[off + (2 * thid + 1) * dstate + threadIdx.y] = temp_x[threadIdx.y * n + 2 * thid + 2];
       }
       else
       {
-        out[off + (2 * thid + 1) * dstate + threadIdx.y] = x[off + (2 * thid + 1) * threadIdx.y] + a[off + (2 * thid + 1) * threadIdx.y] * temp_x[threadIdx.y][2 * thid + 1];
+        out[off + (2 * thid + 1) * dstate + threadIdx.y] = x[off + (2 * thid + 1) * dstate + threadIdx.y] + a[off + (2 * thid + 1) * dstate + threadIdx.y] * temp_x[threadIdx.y * n + 2 * thid + 1];
       }
     }
 
