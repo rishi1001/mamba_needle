@@ -616,7 +616,7 @@ class Conv1d(TensorOp):
 
         l = conv1d(
             dilate(out_grad, axes=(1), dilation=self.stride - 1),
-            transpose(flip(rhs, (0)), axes=(1)),
+            flip(rhs, (0,)),
             padding=k - self.padding - 1,
         )
 

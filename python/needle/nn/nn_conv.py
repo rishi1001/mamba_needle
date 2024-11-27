@@ -189,7 +189,9 @@ class Conv1dPad(Module):
         ### BEGIN YOUR SOLUTION
         self.weight = Parameter(
             init.kaiming_uniform(
-                in_channels * kernel_size, out_channels * kernel_size, shape=(kernel_size, in_channels, out_channels), device=device
+                in_channels * kernel_size, out_channels * kernel_size, 
+                shape=(kernel_size, in_channels, out_channels), device=device, 
+                dtype=dtype, requires_grad=True
             )
         )
         if bias:
@@ -200,10 +202,12 @@ class Conv1dPad(Module):
                     low=-1 * bound,
                     high=bound,
                     device=device,
+                    dtype=dtype,
+                    requires_grad=True
                 )
             )
         else:
-            self.bias = init.zeros(out_channels, device=device)
+            self.bias = init.zeros(out_channels, device=device, requires_grad=True)
         self.padding = padding
         ### END YOUR SOLUTION
 

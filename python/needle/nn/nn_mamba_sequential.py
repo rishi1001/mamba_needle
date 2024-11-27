@@ -6,7 +6,6 @@ import needle.init as init
 from needle import ops
 from .nn_basic import Module, Parameter, Linear
 from .nn_conv import Conv1dPad
-from .nn_mamba import SiLu
 
 class MambaConfigSeq:
     """
@@ -94,17 +93,20 @@ class SelectiveScanSeq(Module):
         # Calculate dA (B, L, E*D, N)
         dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (dim_state,))
                      * ops.broadcast_to(ops.reshape(A, (1, 1) + A.shape), (batch_size, seq_length) + A.shape))
+        assert dA.shape == (batch_size, seq_length, dim_inner, dim_state)
 
         # Calculate dB (B, L, E*D, N)
         dB = (ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (dim_state,))
               * ops.broadcast_to(ops.unsqueeze(B, 2), B.shape[:2] + (dim_inner,) + B.shape[2:]))
+        assert dB.shape == (batch_size, seq_length, dim_inner, dim_state)
 
         # Calculate dB*x (B, L, E*D, N)
         dB_x = dB * ops.broadcast_to(ops.unsqueeze(x, 3), x.shape + (dim_state,))
+        assert dB_x.shape == (batch_size, seq_length, dim_inner, dim_state)
 
         # Initialize h (B, E*D, N)
         h = init.zeros(batch_size, dim_inner, dim_state,
-                       device=self.config.device, dtype=self.config.dtype)
+                       device=self.config.device, dtype=self.config.dtype, requires_grad=True)
         hs = []
 
         # Sequential (RNN) approach involves iteration over length of sequence
@@ -113,10 +115,11 @@ class SelectiveScanSeq(Module):
         for t in range(seq_length):
             # SSM equation 1a/2a (Section 2 of paper)
             h = dA_split[t] * h + dB_x_split[t]
-        hs.append(h)
+            hs.append(h)
 
         # Combine into (B, L, E*D, N) Tensor
         hs = ops.stack(hs, 1)
+        assert hs.shape == (batch_size, seq_length, dim_inner, dim_state)
 
         # SSM equation 1b/2b (Section 2 of paper)
         # y = (hs @ C.unsqueeze(-1)).squeeze(3)
@@ -125,6 +128,7 @@ class SelectiveScanSeq(Module):
         y_stack = [ops.stack([hs_split[i][j] @ C_split[i][j] for j in range(seq_length)], 0) for i in range(batch_size)]
         y = ops.stack(y_stack, 0)
         y = ops.reshape(y, (batch_size, seq_length, dim_inner))
+        assert y.shape == (batch_size, seq_length, dim_inner)
 
         # Skip connection using D
         y = y + ops.broadcast_to(ops.reshape(D, (1, 1, dim_inner)), y.shape) * x
@@ -155,21 +159,25 @@ class SelectiveScanSeq(Module):
         # Calculate dA (B, E*D, N)
         dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 2), dt.shape + (dim_state,))
                      * ops.broadcast_to(ops.unsqueeze(A, 0), (batch_size,) + A.shape))
+        assert dA.shape == (batch_size, dim_inner, dim_state)
 
         # Calculate dB (B, E*D, N)
         dB = (ops.broadcast_to(ops.unsqueeze(dt, 2), dt.shape + (dim_state,))
               * ops.broadcast_to(ops.unsqueeze(B, 1), (batch_size, dim_inner, dim_state)))
+        assert dB.shape == (batch_size, dim_inner, dim_state)
 
         # Calculate dB*x (B, E*D, N)
         dB_x = dB * ops.broadcast_to(ops.unsqueeze(x, 2), x.shape + (dim_state,))
+        assert dB_x.shape == (batch_size, dim_inner, dim_state)
 
         # initialize h
         if h is None:
             h = init.zeros(batch_size, dim_inner, dim_state, 
-                           device=self.config.device, dtype=self.config.dtype) # (B, E*D, N)
+                           device=self.config.device, dtype=self.config.dtype, requires_grad=True) # (B, E*D, N)
 
         # SSM equation 1a/2a (Section 2 of paper)
         h = dA * h + dB_x # (B, E*D, N)
+        assert h.shape == (batch_size, dim_inner, dim_state)
 
         # SSM equation 1b/2b (Section 2 of paper)
         # y = (h @ C.unsqueeze(-1)).squeeze(2) # (B, E*D, N) @ (B, N, 1) -> (B, E*D, 1)
@@ -177,6 +185,7 @@ class SelectiveScanSeq(Module):
         C_split = ops.split(ops.unsqueeze(C, 2), 0)
         y = ops.stack([h_split[i] @ C_split[i] for i in range(batch_size)], 0)
         y = ops.reshape(y, (batch_size, dim_inner))
+        assert y.shape == (batch_size, dim_inner)
 
         # Skip connection using D
         y = y + ops.broadcast_to(ops.unsqueeze(0, D), y.shape) * x
@@ -216,15 +225,15 @@ class SSMBlockSeq(Module):
 
         # Initialize dt_proj bias so dt_min <= F.softplus(dt_proj.bias) <= dt_max
         dt = ops.exp(init.rand(config.dim_inner, low=math.log(config.dt_min), high=math.log(config.dt_max), 
-                            device=config.device, dtype=config.dtype))
+                            device=config.device, dtype=config.dtype, requires_grad=True))
         dt = ops.clamp(dt, minimum=config.dt_init_floor)
-        inv_dt = dt + ops.log(-ops.exp(-dt) + init.ones_like(dt))
+        inv_dt = dt + ops.log(-ops.exp(-dt) + init.ones_like(dt, requires_grad=True))
         self.dt_proj.bias.data = inv_dt
         # self.dt_proj.bias._no_reinit = True # Set dt_proj bias to not be re-initialized, not needed since we initialized
 
         # S4D real initialization for A (dim_inner, dim_state)
         A = ops.broadcast_to(
-            ops.unsqueeze(init.arange(1, config.dim_state+1, dtype=config.dtype, device=config.device), 0), 
+            ops.unsqueeze(init.arange(1, config.dim_state+1, dtype=config.dtype, device=config.device, requires_grad=True), 0), 
             (config.dim_inner, config.dim_state))
         A_log = ops.log(A)
         self.A_log = Parameter(A_log)
@@ -232,7 +241,7 @@ class SSMBlockSeq(Module):
 
         # D "skip" parameter (dim_inner,)
         self.D = Parameter(init.ones(config.dim_inner, dtype=config.dtype,
-                                        device=config.device))
+                                     device=config.device, requires_grad=True))
         # self.D._no_weight_decay = True # no decay anyways
 
         self.selective_scan = SelectiveScanSeq(config)
@@ -265,24 +274,29 @@ class SSMBlockSeq(Module):
         # Define D
         D = self.D
 
-        # Define dt (B, L, dt_rank), B (B, L, dim_state), and C (B, L, dim_state) from x
-        dt_B_C = ops.stack([self.x_proj(s) for s in ops.split(x)], 0)
-        dt_B_C_list = ops.split(dt_B_C, 2)
+        # Define dt (B, L, dt_rank), B (B, L, N), and C (B, L, N) from x
+        dt_B_C = ops.stack([self.x_proj(s) for s in ops.split(x, 0)], 0)
+        dt_B_C_list = list(ops.split(dt_B_C, 2))
         dt = ops.stack(dt_B_C_list[:self.config.dt_rank], 2)
         B = ops.stack(dt_B_C_list[self.config.dt_rank:self.config.dt_rank+self.config.dim_state], 2)
         C = ops.stack(dt_B_C_list[self.config.dt_rank+self.config.dim_state:], 2)
+        assert dt.shape == (batch_size, seq_length, self.config.dt_rank)
+        assert B.shape == (batch_size, seq_length, self.config.dim_state)
+        assert C.shape == (batch_size, seq_length, self.config.dim_state)
 
         # Apply layer norms
         dt, B, C = self._apply_layernorms(dt, B, C)
 
         # Projects dt to (B, L, dim_inner)
         dt = ops.stack([self.dt_proj(s) for s in ops.split(dt, 0)], 0)
+        assert dt.shape == (batch_size, seq_length, dim_inner)
 
         # Apply softplus activation to dt
         dt = self.activation(dt)
 
-        # Selective scan applied
+        # Selective scan applied (B, L, E*D)
         y = self.selective_scan(x, dt, A, B, C, D)
+        assert y.shape == (batch_size, seq_length, dim_inner)
 
         return y
 
@@ -309,22 +323,28 @@ class SSMBlockSeq(Module):
 
         # Define dt (B, dt_rank), B (B, dim_state), and C (B, dim_state) from x
         dt_B_C = self.x_proj(x)
-        dt_B_C_list = ops.split(dt_B_C, 1)
+        dt_B_C_list = list(ops.split(dt_B_C, 1))
         dt = ops.stack(dt_B_C_list[:self.config.dt_rank], 1)
         B = ops.stack(dt_B_C_list[self.config.dt_rank:self.config.dt_rank+dim_state], 1)
         C = ops.stack(dt_B_C_list[self.config.dt_rank+dim_state:], 1)
+        assert dt.shape == (batch_size, self.config.dt_rank)
+        assert B.shape == (batch_size, dim_state)
+        assert C.shape == (batch_size, dim_state)
 
         # Apply layer norms
         dt, B, C = self._apply_layernorms(dt, B, C)
 
-        # Project dt
+        # Project dt to (B, E*D)
         dt = self.dt_proj(dt)
+        assert dt.shape == (batch_size, dim_inner)
 
         # Apply softplus activation to dt
         dt = self.activation(dt)
 
-        # Selective scan step
+        # Selective scan step to get y (B, E*D) and h (B, E*D, N)
         y, h = self.selective_scan.step(x, h, dt, A, B, C, D)
+        assert y.shape == (batch_size, dim_inner)
+        assert h.shape == (batch_size, dim_inner, dim_state)
 
         return y, h
     
@@ -364,7 +384,7 @@ class MambaBlockSeq(Module):
                                 for _ in range(config.dim_inner)]
 
         # Activation function is SiLU/swish activation
-        self.activation = SiLu()
+        self.activation = SiLU()
 
         # SSM block
         self.ssm = SSMBlockSeq(config)
@@ -388,20 +408,35 @@ class MambaBlockSeq(Module):
 
         # Splits input into 2 (B, L, E*D) Tensors for skip connection
         x_skip = ops.stack([self.input_proj(s) for s in ops.split(x, 0)], 0)
-        x_skip_list = ops.split(x_skip, 2)
+        x_skip_list = list(ops.split(x_skip, 2))
         x = ops.stack(x_skip_list[:self.config.dim_inner], 2)
         skip = ops.stack(x_skip_list[self.config.dim_inner:], 2)
+        assert x.shape == (batch_size, seq_length, self.config.dim_inner)
+        assert skip.shape == (batch_size, seq_length, self.config.dim_inner)
 
         # Convolution of x
         # x = self.conv(ops.transpose(x))[:,:,:seq_length].transpose(1, 2)
-        x = ops.transpose(ops.stack([self.conv_grouped[i](ops.unsqueeze(s, 1)) 
-                                     for i, s in enumerate(ops.split(ops.transpose(x), 1))]))
+        x = ops.transpose(
+            ops.stack(
+                list(ops.split(
+                    ops.stack(
+                        [ops.squeeze(self.conv_grouped[i](ops.unsqueeze(s, 1)), 1)
+                        for i, s in enumerate(ops.split(ops.transpose(x), 1))],
+                        1
+                    ),
+                    2
+                ))[:seq_length],
+                2
+            )
+        )
+        assert x.shape == (batch_size, seq_length, self.config.dim_inner)
 
         # Activation for x
         x = self.activation(x)
 
-        # SSM Block
+        # SSM Block (B, L, E*D)
         x = self.ssm(x)
+        assert x.shape == (batch_size, seq_length, self.config.dim_inner)
 
         # Activation for skip
         skip = self.activation(x)
@@ -409,8 +444,9 @@ class MambaBlockSeq(Module):
         # Nonlinearity
         out = x * skip
 
-        # Output projection
+        # Project output to (B, L, D)
         out = ops.stack([self.output_proj(s) for s in ops.split(out, 0)], 0)
+        assert out.shape == (batch_size, seq_length, self.config.dim_model)
 
         return out
 
@@ -437,9 +473,11 @@ class MambaBlockSeq(Module):
 
         # Splits input into 2 (B, E*D) Tensors for skip connection
         x_skip = self.input_proj(x)
-        x_skip_list = ops.split(x_skip, 1)
+        x_skip_list = list(ops.split(x_skip, 1))
         x = ops.stack(x_skip_list[:dim_inner], 1)
         skip = ops.stack(x_skip_list[dim_inner:], 1)
+        assert x.shape == (batch_size, dim_inner)
+        assert skip.shape == (batch_size, dim_inner)
 
         # Convolution step (B, E*D)
         #x = self.conv(torch.cat([inputs, x_cache], dim=2))[:,:,self.config.dim_conv-1]
@@ -448,15 +486,20 @@ class MambaBlockSeq(Module):
         x = ops.split(
                 ops.stack(
                     [self.conv_grouped[i](ops.unsqueeze(s, 1)) 
-                     for i, s in enumerate(ops.split(inputs_x, 1))]
-                ), 2
+                     for i, s in enumerate(ops.split(inputs_x, 1))],
+                    1
+                ), 
+                2
             )[dim_conv_minus_1]
+        assert x.shape == (batch_size, dim_inner)
 
         # Activation for x
         x = self.activation(x)
 
-        # SSM step
+        # SSM step to get y (B, E*D) and h (B, E*D, N)
         y, h = self.ssm.step(x, h)
+        assert y.shape == (batch_size, dim_inner)
+        assert h.shape == (batch_size, dim_inner, dim_state)
 
         # Activation for skip
         skip = self.activation(skip)
@@ -464,11 +507,13 @@ class MambaBlockSeq(Module):
         # Nonlinearity step
         out = y * skip
 
-        # Output projection
+        # Project output to (B, D)
         out = self.output_proj(out)
+        assert out.shape == (batch_size, dim_model)
 
         # Update cache
-        inputs = ops.stack(ops.split(inputs, 2) + [x_cache], 2)
+        inputs = ops.stack(list(ops.split(inputs, 2))[1:] + [x_cache], 2)
+        assert inputs.shape == (batch_size, dim_inner, dim_conv_minus_1)
         cache = (h, inputs)
 
         return out, cache
@@ -498,6 +543,7 @@ class ResidualBlockSeq(Module):
         assert dim_model == self.config.dim_model
 
         out = x + self.layer(self.norm(x))
+        assert out.shape == (batch_size, seq_length, dim_model)
         return out
 
     def step(self, x, cache):
@@ -522,6 +568,7 @@ class ResidualBlockSeq(Module):
         assert dim_conv_minus_1 == self.config.dim_conv - 1
 
         out, cache = self.layer.step(self.norm(x), cache)
+        assert out.shape == (batch_size, seq_length, dim_model)
         out = x + out
         return out, cache
 
@@ -551,6 +598,7 @@ class MambaSeq(Module):
         out = x
         for layer in self.layers:
             out = layer(x)
+            assert out.shape == (batch_size, seq_length, dim_model)
         return out
 
     def step(self, x, caches):
@@ -569,6 +617,7 @@ class MambaSeq(Module):
 
         for i, layer in enumerate(self.layers):
             x, caches[i] = layer.step(x, caches[i])
+            assert x.shape == (batch_size, seq_length, dim_model)
         return x, caches
 
 
@@ -585,9 +634,7 @@ class RMSNorm(Module):
 
     def forward(self, x):
         # output = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        last_dim = x.shape[0]
-        print(x.shape)
-        print(ops.summation(ops.power_scalar(x, 2), len(x.shape) - 1).shape)
+        last_dim = x.shape[-1]
         output = x * ops.power_scalar(
             ops.broadcast_to(
                 ops.reshape(
@@ -602,9 +649,6 @@ class RMSNorm(Module):
             -0.5
         )
 
-        print(x.shape)
-        print(output.shape)
-        print(self.weight.shape)
         if not self.use_mup:
             return output * ops.broadcast_to(
                 ops.reshape(
@@ -625,3 +669,7 @@ class Softplus(Module):
     def forward(self, x):
         return ops.softplus(x, beta=self.beta, threshold=self.threshold)
 
+
+class SiLU(Module):
+    def forward(self, x):
+        return x / (1 + ops.exp(-x))
