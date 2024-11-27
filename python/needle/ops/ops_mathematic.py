@@ -575,8 +575,65 @@ def conv(a, b, stride=1, padding=1):
 
 
 # TODO check this
+# class Conv1d(TensorOp):
+#     def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
+#         if stride is None:
+#             self.stride = 1
+#         else:
+#             self.stride = stride
+
+#         if padding is None:
+#             self.padding = 0
+#         else:
+#             self.padding = padding
+
+#     def compute(self, A, B):
+#         if self.padding:
+#             p = self.padding
+#             A = A.pad(((0, 0), (p, p), (0, 0)))
+
+#         N, H, C_in = A.shape
+#         Ns, Hs, C_ins = A.strides
+#         K, _, C_out = B.shape
+
+#         H_out = ((H - K) // self.stride) + 1
+
+#         Z = NDArray.make(
+#             shape=(N, H_out, K, C_in),
+#             strides=(Ns, Hs * self.stride, Hs, C_ins),
+#             device=A.device,
+#             handle=A._handle,
+#         )
+
+#         Z = Z.compact().reshape((N * H_out, K * C_in))
+
+#         out = Z @ B.compact().reshape((K * C_in, C_out))
+#         return out.compact().reshape((N, H_out, C_out))
+
+#     def gradient(self, out_grad, node):
+#         lhs, rhs = node.inputs
+#         k = rhs.shape[0]
+
+#         l = conv1d(
+#             dilate(out_grad, axes=(1), dilation=self.stride - 1),
+#             transpose(flip(rhs, (0)), axes=(1)),
+#             padding=k - self.padding - 1,
+#         )
+
+#         r = conv1d(
+#             transpose(lhs, axes=(0, 2)),
+#             dilate(
+#                 transpose(out_grad, axes=(0, 1)),
+#                 axes=(0),
+#                 dilation=self.stride - 1,
+#             ),
+#             padding=self.padding,
+#         )
+#         r = transpose(r, axes=(0, 1))
+#         return l, r
+
 class Conv1d(TensorOp):
-    def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
+    def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0, groups: Optional[int] = 1):
         if stride is None:
             self.stride = 1
         else:
@@ -587,6 +644,11 @@ class Conv1d(TensorOp):
         else:
             self.padding = padding
 
+        if groups is None:
+            self.groups = 1
+        else:
+            self.groups = groups
+
     def compute(self, A, B):
         if self.padding:
             p = self.padding
@@ -596,46 +658,100 @@ class Conv1d(TensorOp):
         Ns, Hs, C_ins = A.strides
         K, _, C_out = B.shape
 
+        # Ensure input and output channels are divisible by groups
+        assert C_in % self.groups == 0, "Input channels must be divisible by groups"
+        assert C_out % self.groups == 0, "Output channels must be divisible by groups"
+
+        # Calculate output dimensions
         H_out = ((H - K) // self.stride) + 1
 
-        Z = NDArray.make(
-            shape=(N, H_out, K, C_in),
-            strides=(Ns, Hs * self.stride, Hs, C_ins),
-            device=A.device,
-            handle=A._handle,
-        )
+        # Split inputs and weights by groups
+        group_in_channels = C_in // self.groups
+        group_out_channels = C_out // self.groups
 
-        Z = Z.compact().reshape((N * H_out, K * C_in))
+        # Collect outputs for each group
+        group_outputs = []
 
-        out = Z @ B.compact().reshape((K * C_in, C_out))
-        return out.compact().reshape((N, H_out, C_out))
+        for g in range(self.groups):
+            # Select input channels for this group
+            A_group = A[:, :, g * group_in_channels : (g + 1) * group_in_channels]
+            
+            # Select output channels for this group
+            B_group = B[:, :, g * group_out_channels : (g + 1) * group_out_channels]
+
+            # Perform convolution for this group
+            Ns, Hs, C_ins = A_group.strides
+
+            Z = NDArray.make(
+                shape=(N, H_out, K, group_in_channels),
+                strides=(Ns, Hs * self.stride, Hs, C_ins),
+                device=A.device,
+                handle=A._handle,
+            )
+
+            Z = Z.compact().reshape((N * H_out, K * group_in_channels))
+
+            out_group = Z @ B_group.compact().reshape((K * group_in_channels, group_out_channels))
+            group_outputs.append(out_group.compact().reshape((N, H_out, group_out_channels)))
+
+        # Concatenate group outputs
+        return NDArray.concatenate(group_outputs, axis=2)
 
     def gradient(self, out_grad, node):
         lhs, rhs = node.inputs
         k = rhs.shape[0]
 
-        l = conv1d(
-            dilate(out_grad, axes=(1), dilation=self.stride - 1),
-            flip(rhs, (0,)),
-            padding=k - self.padding - 1,
-        )
+        # Ensure input and output channels are divisible by groups
+        N, H, C_in = lhs.shape
+        _, _, C_out = rhs.shape
+        
+        group_in_channels = C_in // self.groups
+        group_out_channels = C_out // self.groups
 
-        r = conv1d(
-            transpose(lhs, axes=(0, 2)),
-            dilate(
-                transpose(out_grad, axes=(0, 1)),
-                axes=(0),
-                dilation=self.stride - 1,
-            ),
-            padding=self.padding,
-        )
-        r = transpose(r, axes=(0, 1))
-        return l, r
+        # Collect gradients for each group
+        lhs_grad_groups = []
+        rhs_grad_groups = []
 
+        for g in range(self.groups):
+            # Select input and output channels for this group
+            lhs_group = lhs[:, :, g * group_in_channels : (g + 1) * group_in_channels]
+            out_grad_group = out_grad[:, :, g * group_out_channels : (g + 1) * group_out_channels]
+            rhs_group = rhs[:, :, g * group_out_channels : (g + 1) * group_out_channels]
 
-def conv1d(a, b, stride=1, padding=1):
-    return Conv1d(stride, padding)(a, b)
+            # Compute gradient for input
+            lhs_grad_g = conv1d(
+                dilate(out_grad_group, axes=(1), dilation=self.stride - 1),
+                transpose(flip(rhs_group, (0)), axes=(1)),
+                padding=k - self.padding - 1,
+                groups=1  # Gradient computation for each group is standard convolution
+            )
 
+            # Compute gradient for weights
+            rhs_grad_g = conv1d(
+                transpose(lhs_group, axes=(0, 2)),
+                dilate(
+                    transpose(out_grad_group, axes=(0, 1)),
+                    axes=(0),
+                    dilation=self.stride - 1,
+                ),
+                padding=self.padding,
+                groups=1  # Gradient computation for each group is standard convolution
+            )
+            rhs_grad_g = transpose(rhs_grad_g, axes=(0, 1))
+
+            lhs_grad_groups.append(lhs_grad_g)
+            rhs_grad_groups.append(rhs_grad_g)
+
+        # TODO check this
+        # Concatenate gradients across groups
+        lhs_grad = concat(lhs_grad_groups, axis=2)
+        rhs_grad = concat(rhs_grad_groups, axis=2)
+
+        return lhs_grad, rhs_grad
+    
+
+def conv1d(a, b, stride=1, padding=1, groups=1):
+    return Conv1d(stride, padding, groups)(a, b)
 
 # TODO check concat
 class Concat(TensorOp):
@@ -656,14 +772,8 @@ class Concat(TensorOp):
 
         # Check shape compatibility
         for i in range(1, len(arrays)):
-            if any(
-                s != t
-                for j, (s, t) in enumerate(zip(arrays[0].shape, arrays[i].shape))
-                if j != self.axis
-            ):
-                raise ValueError(
-                    "Shape mismatch: Tensors must have the same shape except along the concatenation axis."
-                )
+            if any(s != t for j, (s, t) in enumerate(zip(arrays[0].shape, arrays[i].shape)) if j != self.axis):
+                raise ValueError("Shape mismatch: Tensors must have the same shape except along the concatenation axis.")
 
         # Compute the shape of the output tensor
         concat_size = sum(array.shape[self.axis] for array in arrays)
@@ -692,7 +802,6 @@ class Concat(TensorOp):
 def concat(args, axis):
     return Concat(axis)(make_tuple(*args))
 
-
 class Softplus(TensorOp):
     def __init__(self, beta: Optional[float] = 1.0, threshold: Optional[float] = 20.0):
         self.beta = beta
@@ -700,11 +809,7 @@ class Softplus(TensorOp):
 
     def compute(self, A: NDArray):
         ### BEGIN YOUR SOLUTION
-        below = (
-            (A * self.beta <= self.threshold)
-            * array_api.log(1 + array_api.exp(self.beta * A))
-            / self.beta
-        )
+        below = (A * self.beta <= self.threshold) * array_api.log(1 + array_api.exp(self.beta * A)) / self.beta
         above = (A * self.beta > self.threshold) * A
         return below + above
         ### END YOUR SOLUTION
@@ -712,22 +817,8 @@ class Softplus(TensorOp):
     def gradient(self, out_grad: Tensor, node: Tensor):
         ### BEGIN YOUR SOLUTION
         A = node.inputs[0]
-        below = (
-            Tensor(
-                (A.realize_cached_data() * self.beta <= self.threshold),
-                device=A.device,
-                dtype=A.dtype,
-                requires_grad=False,
-            )
-            * exp(self.beta * A)
-            / (1 + exp(self.beta * A))
-        )
-        above = Tensor(
-            (A.realize_cached_data() * self.beta > self.threshold),
-            device=A.device,
-            dtype=A.dtype,
-            requires_grad=False,
-        )
+        below = Tensor((A.realize_cached_data() * self.beta <= self.threshold), device=A.device, dtype=A.dtype, requires_grad=False) * exp(self.beta * A) / (1 + exp(self.beta * A))
+        above = Tensor((A.realize_cached_data() * self.beta > self.threshold), device=A.device, dtype=A.dtype, requires_grad=False)
         return (below + above) * out_grad
         ### END YOUR SOLUTION
 
@@ -737,14 +828,13 @@ def softplus(a, beta=1.0, threshold=20.0):
 
 
 class Clamp(TensorOp):
-    def __init__(
-        self, minimum: Optional[float] = None, maximum: Optional[float] = None
-    ):
+    def __init__(self, minimum: Optional[float] = None, maximum: Optional[float] = None):
         self.minimum = minimum
         self.maximum = maximum
 
     def compute(self, A: NDArray):
         ### BEGIN YOUR SOLUTION
+        breakpoint()
         if self.minimum is not None:
             A = A * (A >= self.minimum)
             A = A + ((A < self.minimum) * self.minimum)
@@ -758,25 +848,16 @@ class Clamp(TensorOp):
         ### BEGIN YOUR SOLUTION
         A = node.inputs[0]
         if self.minimum is not None:
-            out_grad = out_grad * Tensor(
-                (A.realize_cached_data() >= self.minimum),
-                device=A.device,
-                dtype=A.dtype,
-                requires_grad=False,
-            )
+            out_grad = out_grad * Tensor((A.realize_cached_data() >= self.minimum), device=A.device, dtype=A.dtype, requires_grad=False)
         if self.maximum is not None:
-            out_grad = out_grad * Tensor(
-                (A.realize_cached_data() <= self.maximum),
-                device=A.device,
-                dtype=A.dtype,
-                requires_grad=False,
-            )
+            out_grad = out_grad * Tensor((A.realize_cached_data() <= self.maximum), device=A.device, dtype=A.dtype, requires_grad=False)
         return out_grad
         ### END YOUR SOLUTION
 
 
 def clamp(a, minimum=None, maximum=None):
     return Clamp(minimum, maximum)(a)
+
 
 
 class StridedSlice(TensorOp):
@@ -791,7 +872,7 @@ class StridedSlice(TensorOp):
         idx = [slice(None)] * len(a.shape)
         idx[self.axis] = slice(self.start, self.end, self.stride)
         return a[tuple(idx)]
-
+    
     def gradient(self, out_grad, node):
         a = node.inputs[0]
         out = array_api.full(a.shape, 0, device=a.device)
@@ -801,19 +882,18 @@ class StridedSlice(TensorOp):
         idx[self.axis] = slice(self.start, self.end, self.stride)
         out[tuple(idx)] = out_grad
         return out
-
-
+    
 class Squeeze(TensorOp):
     def __init__(self, axis: int):
         self.axis = axis
 
     def compute(self, a):
         # return array_api.squeeze(a, axis=self.axis)
+        if self.axis < 0:
+            self.axis = len(a.shape) + self.axis
         shape = list(a.shape)
-        assert (
-            shape[self.axis] == 1
-        ), f"Can't squeeze axis {self.axis} as it's not of size 1"
-        shape.pop(self.axis)
+        assert shape[self.axis] == 1, f"Can't squeeze axis {self.axis} as it's not of size 1"
+        shape.pop(self.axis)    # TODO check for negative axis
         return array_api.reshape(a, shape)
 
     def gradient(self, out_grad, node):
@@ -824,12 +904,16 @@ class Squeeze(TensorOp):
         # For example, if shape was (3,1,4) and axis=1, we want to go back to (3,1,4)
         return array_api.reshape(out_grad, shape)
 
-
+def squeeze(a, axis):
+    return Squeeze(axis)(a)
+    
 class Unsqueeze(TensorOp):
     def __init__(self, axis: int):
         self.axis = axis
 
     def compute(self, a):
+        if self.axis < 0:
+            self.axis = len(a.shape) + self.axis + 1
         shape = list(a.shape)
         shape.insert(self.axis, 1)
         return array_api.reshape(a, shape)
@@ -838,8 +922,8 @@ class Unsqueeze(TensorOp):
         a = node.inputs[0]
         shape = list(a.shape)
         return array_api.reshape(out_grad, shape)
-def squeeze(a, axis):
-    return Squeeze(axis)(a)
 
 def unsqueeze(a, axis):
     return Unsqueeze(axis)(a)
+
+

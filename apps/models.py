@@ -243,9 +243,49 @@ class MambaLMConfig(MambaConfig):
 
 #     return model #, config
 
+# class MambaLM(nn.Module):
+#     def __init__(self, lm_config: MambaLMConfig, device=None, dtype="float32"):
+#         super().__init__()
+#         self.lm_config = lm_config
+#         self.config = lm_config.to_mamba_config()
+
+#         self.embedding = nn.Embedding(self.lm_config.vocab_size, self.config.d_model, device=device, dtype=dtype)
+#         self.mamba = Mamba(self.config)
+#         self.norm_f = RMSNorm(self.config.d_model)
+
+#         self.lm_head = nn.Linear(self.config.d_model, self.lm_config.vocab_size, bias=False, device=device)
+#         self.lm_head.weight = self.embedding.weight
+        
+#     def init_caches(self):
+#         # hs will be initialized to zeros, so do inputs
+#         hs = init.zeros(self.config.n_layers, 1, self.config.d_inner, self.config.d_state, device=next(self.parameters()).device)
+#         # inputs size would be like this
+#         inputs = init.zeros(self.config.n_layers, 1, self.config.d_inner, self.config.d_conv-1, device=next(self.parameters()).device)
+        
+#         return hs, inputs
+        
+#     def forward(self, token, hs, inputs):
+#         # TODO figure this out?
+#         breakpoint()
+#         # token : (B)
+#         # caches : [cache(layer) for all layers], cache : (h, inputs)
+
+#         # logits : (B, vocab_size)
+#         # caches : [cache(layer) for all layers], cache : (h, inputs)
+
+#         x = self.embedding(token)
+
+#         x, hs, inputs = self.mamba.step(x, hs, inputs)
+#         x = self.norm_f(x)
+
+#         logits = self.lm_head(x)
+
+#         return logits, hs, inputs
+    
 class MambaLM(nn.Module):
     def __init__(self, lm_config: MambaLMConfig, device=None, dtype="float32"):
         super().__init__()
+        breakpoint()
         self.lm_config = lm_config
         self.config = lm_config.to_mamba_config()
 
@@ -264,21 +304,23 @@ class MambaLM(nn.Module):
         
         return hs, inputs
         
-    def forward(self, token, hs, inputs):
+    def forward(self, x):
+        # TODO figure this out?
         # token : (B)
         # caches : [cache(layer) for all layers], cache : (h, inputs)
 
         # logits : (B, vocab_size)
         # caches : [cache(layer) for all layers], cache : (h, inputs)
-
-        x = self.embedding(token)
-
-        x, hs, inputs = self.mamba.step(x, hs, inputs)
+        # TODO add embedding?
+        # breakpoint()        # shape ? (B, T, D) or what?
+        x = self.embedding(x)           # TODO check if we need a reshape? or transpose?
+        x = self.mamba(x)
         x = self.norm_f(x)
-
         logits = self.lm_head(x)
 
-        return logits, hs, inputs
+        return logits
+
+        
     
 
 

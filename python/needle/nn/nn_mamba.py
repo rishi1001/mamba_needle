@@ -121,6 +121,7 @@ class Mamba(Module):
 class ResidualBlockMamba(Module):
     def __init__(self, config: MambaConfig):
         super().__init__()
+        breakpoint()
 
         self.mixer = MambaBlock(config)
         self.norm = RMSNorm(config.d_model, config.rms_norm_eps, config.mup)
@@ -129,7 +130,6 @@ class ResidualBlockMamba(Module):
         # x : (B, L, D)
 
         # output : (B, L, D)
-
         output = self.mixer(self.norm(x)) + x
         return output
 
@@ -204,13 +204,21 @@ class MambaBlock(Module):
             init.rand(config.d_inner)
             * (math.log(config.dt_max) - math.log(config.dt_min))
             + math.log(config.dt_min)
-        ).clamp(min=config.dt_init_floor)
+        )
+        # .clamp(min=config.dt_init_floor)
+        breakpoint()
+        dt = ops.clamp(dt, minimum=config.dt_init_floor)
         inv_dt = dt + ops.log(
             -ops.exp(-dt) + 1
         )  # inverse of softplus: https://github.com/pytorch/pytorch/issues/72759
 
-        with torch.no_grad():
-            self.dt_proj.bias.copy_(inv_dt)
+        # TODO weird hack to avoid reinitialization, check if needed
+        # with torch.no_grad():
+        #     self.dt_proj.bias.copy_(inv_dt)
+        original_requires_grad = self.dt_proj.bias.requires_grad
+        self.dt_proj.bias.requires_grad = False
+        self.dt_proj.bias.data = inv_dt  # or however you update the underlying data
+        self.dt_proj.bias.requires_grad = original_requires_grad
         # self.dt_proj.bias._no_reinit = True # initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
         # todo : explain why removed
         
@@ -220,7 +228,7 @@ class MambaBlock(Module):
         # )
         # TODO verify arange and repeat
         seq = Tensor(
-            ndarray.NDArray(list(range(1, config.d_state + 1))), device=self.A_log.device, dtype="float32"
+            ndarray.NDArray(list(range(1, config.d_state + 1))), device=self.dt_proj.bias.device, dtype=self.dt_proj.bias.dtype
         )
 
         # Repeat the sequence along the first dimension (similar to torch.repeat)
@@ -549,9 +557,9 @@ class RMSNorm(Module):
 
     def forward(self, x: Tensor) -> Tensor:
         # output = x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        output = x * ops.power(
-            ops.summation(ops.power_scalar(output, 2), axes=(1,)), -1 / 2
-        )
+        # output = x * ops.power_scalar(
+        #     ops.summation(ops.power_scalar(x, 2), axes=(1,)), -0.5
+        # )
 
         # Step 1: Compute squared values
         squared = ops.power_scalar(x, 2)
@@ -568,7 +576,8 @@ class RMSNorm(Module):
 
         # TODO check if need unsqueeze?
         # Step 5: Multiply with input
-        output = x * inv_sqrt.unsqueeze(-1)
+        # output = x * inv_sqrt.unsqueeze(-1)
+        output = x * ops.unsqueeze(inv_sqrt, -1).broadcast_to(x.shape)
 
         if not self.use_mup:
             return output * self.weight

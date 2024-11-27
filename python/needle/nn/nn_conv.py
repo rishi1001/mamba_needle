@@ -92,13 +92,6 @@ class Conv(Module):
 
 
 class Conv1d(Module):
-    """
-    Multi-channel 1D convolutional layer
-    IMPORTANT: Accepts inputs in NCHW format, outputs also in NCHW format
-    Only supports padding=same
-    No grouped convolution or dilation
-    """
-
     def __init__(
         self,
         in_channels,
@@ -106,6 +99,8 @@ class Conv1d(Module):
         kernel_size,
         stride=1,
         bias=True,
+        groups=1,  # Add groups parameter
+        padding=0,
         device=None,
         dtype="float32",
     ):
@@ -114,17 +109,28 @@ class Conv1d(Module):
             kernel_size = kernel_size[0]
         if isinstance(stride, tuple):
             stride = stride[0]
+        
+        # Validate groups
+        assert in_channels % groups == 0, "in_channels must be divisible by groups"
+        assert out_channels % groups == 0, "out_channels must be divisible by groups"
+        
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.stride = stride
+        self.groups = groups
+        self.padding = padding
 
-        ### BEGIN YOUR SOLUTION
+        # Modify weight initialization for groups
         self.weight = Parameter(
             init.kaiming_uniform(
-                in_channels * kernel_size, out_channels * kernel_size, shape=(kernel_size, in_channels, out_channels), device=device
+                in_channels * kernel_size // groups, 
+                out_channels * kernel_size // groups, 
+                shape=(kernel_size, in_channels // groups, out_channels // groups), 
+                device=device
             )
         )
+        
         if bias:
             bound = 1 / (math.sqrt(in_channels * kernel_size))
             self.bias = Parameter(
@@ -137,19 +143,18 @@ class Conv1d(Module):
             )
         else:
             self.bias = init.zeros(out_channels, device=device)
-        ### END YOUR SOLUTION
 
     def forward(self, x: Tensor) -> Tensor:
-        ### BEGIN YOUR SOLUTION
         K = self.kernel_size
 
         # NCH -> NHC
         x = ops.transpose(x, axes=(1, 2))
 
-        # H_out = ((H+2P-K)//self.stride) + 1
-        # W_out = ((W+2P-K)//self.stride) + 1
-
-        out = ops.conv1d(x, self.weight, stride=self.stride, padding=(K - 1) // 2)
+        # For grouped convolution, you might need to modify conv1d to support groups
+        # If your current implementation doesn't support groups, you'll need to 
+        # implement a custom grouped convolution logic
+        out = ops.conv1d(x, self.weight, stride=self.stride, padding=self.padding, groups=self.groups)
+        
         bias = ops.broadcast_to(
             ops.reshape(self.bias, (1, 1, self.out_channels)),
             out.shape,
