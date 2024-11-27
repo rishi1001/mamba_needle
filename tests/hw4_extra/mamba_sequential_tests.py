@@ -153,7 +153,13 @@ def evaluate_ptb(
         data, model, seq_len, loss_fn=loss_fn(), opt=None, device=device, dtype=dtype
     )
 
+
+
 device = ndl.cpu()
+clamped = ndl.ops.clamp(ndl.Tensor(np.random.rand(4, 4), device=device, dtype="float32", requires_grad=True), minimum=0.2, maximum=0.8)
+print(clamped)
+clamped.backward()
+print(clamped.grad)
 corpus = ndl.data.Corpus("data/ptb")
 train_data = ndl.data.batchify(corpus.train, batch_size=12, device=device, dtype="float32")
 config = MambaConfigSeq(dim_model=28, num_layers=3, dim_state=12, device=device)

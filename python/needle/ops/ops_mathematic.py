@@ -834,13 +834,12 @@ class Clamp(TensorOp):
 
     def compute(self, A: NDArray):
         ### BEGIN YOUR SOLUTION
-        breakpoint()
         if self.minimum is not None:
-            A = A * (A >= self.minimum)
-            A = A + ((A < self.minimum) * self.minimum)
+            new_A = A * (A >= self.minimum)
+            A = new_A + ((A < self.minimum) * self.minimum)
         if self.maximum is not None:
-            A = A * (A <= self.maximum)
-            A = A + ((A > self.maximum) * self.maximum)
+            new_A = A * (A <= self.maximum)
+            A = new_A + ((A > self.maximum) * self.maximum)
         return A
         ### END YOUR SOLUTION
 
@@ -848,9 +847,9 @@ class Clamp(TensorOp):
         ### BEGIN YOUR SOLUTION
         A = node.inputs[0]
         if self.minimum is not None:
-            out_grad = out_grad * Tensor((A.realize_cached_data() >= self.minimum), device=A.device, dtype=A.dtype, requires_grad=False)
+            out_grad.data = out_grad.data * Tensor((A.realize_cached_data() >= self.minimum), device=A.device, dtype=A.dtype, requires_grad=False)
         if self.maximum is not None:
-            out_grad = out_grad * Tensor((A.realize_cached_data() <= self.maximum), device=A.device, dtype=A.dtype, requires_grad=False)
+            out_grad.data = out_grad.data * Tensor((A.realize_cached_data() <= self.maximum), device=A.device, dtype=A.dtype, requires_grad=False)
         return out_grad
         ### END YOUR SOLUTION
 
