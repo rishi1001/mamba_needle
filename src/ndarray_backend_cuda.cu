@@ -634,7 +634,6 @@ namespace needle
       extern __shared__ scalar_t shared_mem[];
       const size_t n = seqlen;
 
-      // Correct allocation of temp_a and temp_x within shared memory
       scalar_t *temp_a = shared_mem;          // temp_a[0..dstate*n -1]
       scalar_t *temp_x = temp_a + dstate * n; // temp_x[0..dstate*n -1]
 
@@ -725,6 +724,101 @@ namespace needle
       PscanKernel<<<grid, block, shared_mem_size>>>(a.ptr, x.ptr, out->ptr, batch_size, dim, seqlen, dstate);
     }
 
+    __global__ void ReversePscanKernel(const scalar_t *a, scalar_t *x, scalar_t *out, size_t batch_size, size_t dim, size_t seqlen, size_t dstate)
+    {
+      extern __shared__ scalar_t shared_mem[];
+      const size_t n = seqlen;
+
+      scalar_t *temp_a = shared_mem;          // temp_a[0..dstate*n -1]
+      scalar_t *temp_x = temp_a + dstate * n; // temp_x[0..dstate*n -1]
+
+      const int batch_id = blockIdx.x;
+      const int dim_id = blockIdx.y;
+
+      const int thid = threadIdx.x;
+      const int off = batch_id * dim * seqlen * dstate + dim_id * seqlen * dstate;
+
+      // load data into shared memory
+      temp_a[threadIdx.y * n + 2 * thid] = a[off + (2 * thid) * dstate + threadIdx.y];
+      temp_a[threadIdx.y * n + 2 * thid + 1] = a[off + (2 * thid + 1) * dstate + threadIdx.y];
+
+      temp_x[threadIdx.y * n + 2 * thid] = x[off + (2 * thid) * dstate + threadIdx.y];
+      temp_x[threadIdx.y * n + 2 * thid + 1] = x[off + (2 * thid + 1) * dstate + threadIdx.y];
+
+      // up sweep
+      int offset = 1;
+      for (int d = n >> 1; d > 0; d >>= 1)
+      {
+        __syncthreads();
+        if (thid < d)
+        {
+          const int ai = offset * (2 * thid + 1) - 1;
+          const int bi = offset * (2 * thid + 2) - 1;
+
+          temp_x[threadIdx.y * n + ai] += temp_a[threadIdx.y * n + ai] * temp_x[threadIdx.y * n + bi];
+          temp_a[threadIdx.y * n + ai] *= temp_a[threadIdx.y * n + bi];
+        }
+        offset *= 2;
+      }
+
+      // clear and save the last element
+      scalar_t last = 0;
+      if (thid == 0)
+      {
+        last = temp_x[threadIdx.y * n];
+        temp_x[threadIdx.y * n] = 0;
+        temp_a[threadIdx.y * n] = 1;
+      }
+
+      // down sweep
+      for (int d = 1; d < n; d *= 2)
+      {
+        offset >>= 1;
+        __syncthreads();
+
+        if (thid < d)
+        {
+          const int ai = offset * (2 * thid) - 1;
+          const int bi = offset * (2 * thid + 1) - 1;
+
+          const scalar_t t_a = temp_a[threadIdx.y * n + bi];
+          const scalar_t t_x = temp_x[threadIdx.y * n + bi];
+
+          temp_a[threadIdx.y * n + bi] = temp_a[threadIdx.y * n + ai];
+          temp_x[threadIdx.y * n + bi] = temp_x[threadIdx.y * n + ai];
+
+          temp_x[threadIdx.y * n + ai] = t_x + t_a * temp_x[threadIdx.y * n + ai];
+          temp_a[threadIdx.y * n + ai] *= t_a;
+        }
+      }
+
+      __syncthreads();
+
+      // write back
+      out[off + (2 * thid + 1) * dstate + threadIdx.y] = temp_x[threadIdx.y * n + 2 * thid + 1];
+      if (thid == 0)
+      {
+        out[off + (2 * thid) * dstate + threadIdx.y] = last;
+      }
+      else
+      {
+        out[off + (2 * thid) * dstate + threadIdx.y] = temp_x[threadIdx.y * n + 2 * thid];
+      }
+    }
+
+    void ReversePscan(const CudaArray &a, CudaArray &x, CudaArray *out, std::vector<int32_t> shape)
+    {
+      const int32_t batch_size = shape[0];
+      const int32_t dim = shape[1];
+      const int32_t seqlen = shape[2];
+      const int32_t dstate = shape[3];
+
+      dim3 grid = dim3(batch_size, dim, 1);
+      dim3 block = dim3(seqlen / 2, dstate, 1);
+      size_t shared_mem_size = 2 * dstate * seqlen * sizeof(scalar_t);
+      ReversePscanKernel<<<grid, block, shared_mem_size>>>(a.ptr, x.ptr, out->ptr, batch_size, dim, seqlen, dstate);
+    }
+
   } // namespace cuda
 } // namespace needle
 
@@ -797,4 +891,5 @@ PYBIND11_MODULE(ndarray_backend_cuda, m)
   m.def("reduce_sum", ReduceSum);
 
   m.def("pscan", Pscan);
+  m.def("reverse_pscan", ReversePscan);
 }
