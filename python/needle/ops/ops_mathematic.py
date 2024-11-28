@@ -575,65 +575,8 @@ def conv(a, b, stride=1, padding=1):
 
 
 # TODO check this
-# class Conv1d(TensorOp):
-#     def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
-#         if stride is None:
-#             self.stride = 1
-#         else:
-#             self.stride = stride
-
-#         if padding is None:
-#             self.padding = 0
-#         else:
-#             self.padding = padding
-
-#     def compute(self, A, B):
-#         if self.padding:
-#             p = self.padding
-#             A = A.pad(((0, 0), (p, p), (0, 0)))
-
-#         N, H, C_in = A.shape
-#         Ns, Hs, C_ins = A.strides
-#         K, _, C_out = B.shape
-
-#         H_out = ((H - K) // self.stride) + 1
-
-#         Z = NDArray.make(
-#             shape=(N, H_out, K, C_in),
-#             strides=(Ns, Hs * self.stride, Hs, C_ins),
-#             device=A.device,
-#             handle=A._handle,
-#         )
-
-#         Z = Z.compact().reshape((N * H_out, K * C_in))
-
-#         out = Z @ B.compact().reshape((K * C_in, C_out))
-#         return out.compact().reshape((N, H_out, C_out))
-
-#     def gradient(self, out_grad, node):
-#         lhs, rhs = node.inputs
-#         k = rhs.shape[0]
-
-#         l = conv1d(
-#             dilate(out_grad, axes=(1), dilation=self.stride - 1),
-#             transpose(flip(rhs, (0)), axes=(1)),
-#             padding=k - self.padding - 1,
-#         )
-
-#         r = conv1d(
-#             transpose(lhs, axes=(0, 2)),
-#             dilate(
-#                 transpose(out_grad, axes=(0, 1)),
-#                 axes=(0),
-#                 dilation=self.stride - 1,
-#             ),
-#             padding=self.padding,
-#         )
-#         r = transpose(r, axes=(0, 1))
-#         return l, r
-
 class Conv1d(TensorOp):
-    def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0, groups: Optional[int] = 1):
+    def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0):
         if stride is None:
             self.stride = 1
         else:
@@ -644,11 +587,6 @@ class Conv1d(TensorOp):
         else:
             self.padding = padding
 
-        if groups is None:
-            self.groups = 1
-        else:
-            self.groups = groups
-
     def compute(self, A, B):
         if self.padding:
             p = self.padding
@@ -658,100 +596,166 @@ class Conv1d(TensorOp):
         Ns, Hs, C_ins = A.strides
         K, _, C_out = B.shape
 
-        # Ensure input and output channels are divisible by groups
-        assert C_in % self.groups == 0, "Input channels must be divisible by groups"
-        assert C_out % self.groups == 0, "Output channels must be divisible by groups"
-
-        # Calculate output dimensions
         H_out = ((H - K) // self.stride) + 1
 
-        # Split inputs and weights by groups
-        group_in_channels = C_in // self.groups
-        group_out_channels = C_out // self.groups
+        Z = NDArray.make(
+            shape=(N, H_out, K, C_in),
+            strides=(Ns, Hs * self.stride, Hs, C_ins),
+            device=A.device,
+            handle=A._handle,
+        )
 
-        # Collect outputs for each group
-        group_outputs = []
+        Z = Z.compact().reshape((N * H_out, K * C_in))
 
-        for g in range(self.groups):
-            # Select input channels for this group
-            A_group = A[:, :, g * group_in_channels : (g + 1) * group_in_channels]
-            
-            # Select output channels for this group
-            B_group = B[:, :, g * group_out_channels : (g + 1) * group_out_channels]
-
-            # Perform convolution for this group
-            Ns, Hs, C_ins = A_group.strides
-
-            Z = NDArray.make(
-                shape=(N, H_out, K, group_in_channels),
-                strides=(Ns, Hs * self.stride, Hs, C_ins),
-                device=A.device,
-                handle=A._handle,
-            )
-
-            Z = Z.compact().reshape((N * H_out, K * group_in_channels))
-
-            out_group = Z @ B_group.compact().reshape((K * group_in_channels, group_out_channels))
-            group_outputs.append(out_group.compact().reshape((N, H_out, group_out_channels)))
-
-        # Concatenate group outputs
-        return NDArray.concatenate(group_outputs, axis=2)
+        out = Z @ B.compact().reshape((K * C_in, C_out))
+        return out.compact().reshape((N, H_out, C_out))
 
     def gradient(self, out_grad, node):
         lhs, rhs = node.inputs
         k = rhs.shape[0]
 
-        # Ensure input and output channels are divisible by groups
-        N, H, C_in = lhs.shape
-        _, _, C_out = rhs.shape
+        l = conv1d(
+            dilate(out_grad, axes=(1,), dilation=self.stride - 1),
+            transpose(flip(rhs, (0,))),
+            padding=k - self.padding - 1,
+        )
+
+        r = conv1d(
+            transpose(lhs, axes=(0, 2)),
+            dilate(
+                transpose(out_grad, axes=(0, 1)),
+                axes=(0),
+                dilation=self.stride - 1,
+            ),
+            padding=self.padding,
+        )
+        r = transpose(r, axes=(0, 1))
+        return l, r
+
+
+def conv1d(arr, k, stride=None, padding=None):
+    return Conv1d(stride=stride, padding=padding)(arr, k)
+
+# class Conv1d(TensorOp):
+#     def __init__(self, stride: Optional[int] = 1, padding: Optional[int] = 0, groups: Optional[int] = 1):
+#         if stride is None:
+#             self.stride = 1
+#         else:
+#             self.stride = stride
+
+#         if padding is None:
+#             self.padding = 0
+#         else:
+#             self.padding = padding
+
+#         if groups is None:
+#             self.groups = 1
+#         else:
+#             self.groups = groups
+
+#     def compute(self, A, B):
+#         if self.padding:
+#             p = self.padding
+#             A = A.pad(((0, 0), (p, p), (0, 0)))
+
+#         N, H, C_in = A.shape
+#         Ns, Hs, C_ins = A.strides
+#         K, _, C_out = B.shape
+
+#         # Ensure input and output channels are divisible by groups
+#         assert C_in % self.groups == 0, "Input channels must be divisible by groups"
+#         assert C_out % self.groups == 0, "Output channels must be divisible by groups"
+
+#         # Calculate output dimensions
+#         H_out = ((H - K) // self.stride) + 1
+
+#         # Split inputs and weights by groups
+#         group_in_channels = C_in // self.groups
+#         group_out_channels = C_out // self.groups
+
+#         # Collect outputs for each group
+#         group_outputs = []
+
+#         for g in range(self.groups):
+#             # Select input channels for this group
+#             A_group = A[:, :, g * group_in_channels : (g + 1) * group_in_channels]
+            
+#             # Select output channels for this group
+#             B_group = B[:, :, g * group_out_channels : (g + 1) * group_out_channels]
+
+#             # Perform convolution for this group
+#             Ns, Hs, C_ins = A_group.strides
+
+#             Z = NDArray.make(
+#                 shape=(N, H_out, K, group_in_channels),
+#                 strides=(Ns, Hs * self.stride, Hs, C_ins),
+#                 device=A.device,
+#                 handle=A._handle,
+#             )
+
+#             Z = Z.compact().reshape((N * H_out, K * group_in_channels))
+
+#             out_group = Z @ B_group.compact().reshape((K * group_in_channels, group_out_channels))
+#             group_outputs.append(out_group.compact().reshape((N, H_out, group_out_channels)))
+
+#         # Concatenate group outputs
+#         return NDArray.concatenate(group_outputs, axis=2)
+
+#     def gradient(self, out_grad, node):
+#         lhs, rhs = node.inputs
+#         k = rhs.shape[0]
+
+#         # Ensure input and output channels are divisible by groups
+#         N, H, C_in = lhs.shape
+#         _, _, C_out = rhs.shape
         
-        group_in_channels = C_in // self.groups
-        group_out_channels = C_out // self.groups
+#         group_in_channels = C_in // self.groups
+#         group_out_channels = C_out // self.groups
 
-        # Collect gradients for each group
-        lhs_grad_groups = []
-        rhs_grad_groups = []
+#         # Collect gradients for each group
+#         lhs_grad_groups = []
+#         rhs_grad_groups = []
 
-        for g in range(self.groups):
-            # Select input and output channels for this group
-            lhs_group = lhs[:, :, g * group_in_channels : (g + 1) * group_in_channels]
-            out_grad_group = out_grad[:, :, g * group_out_channels : (g + 1) * group_out_channels]
-            rhs_group = rhs[:, :, g * group_out_channels : (g + 1) * group_out_channels]
+#         for g in range(self.groups):
+#             # Select input and output channels for this group
+#             lhs_group = lhs[:, :, g * group_in_channels : (g + 1) * group_in_channels]
+#             out_grad_group = out_grad[:, :, g * group_out_channels : (g + 1) * group_out_channels]
+#             rhs_group = rhs[:, :, g * group_out_channels : (g + 1) * group_out_channels]
 
-            # Compute gradient for input
-            lhs_grad_g = conv1d(
-                dilate(out_grad_group, axes=(1), dilation=self.stride - 1),
-                transpose(flip(rhs_group, (0)), axes=(1)),
-                padding=k - self.padding - 1,
-                groups=1  # Gradient computation for each group is standard convolution
-            )
+#             # Compute gradient for input
+#             lhs_grad_g = conv1d(
+#                 dilate(out_grad_group, axes=(1), dilation=self.stride - 1),
+#                 transpose(flip(rhs_group, (0)), axes=(1)),
+#                 padding=k - self.padding - 1,
+#                 groups=1  # Gradient computation for each group is standard convolution
+#             )
 
-            # Compute gradient for weights
-            rhs_grad_g = conv1d(
-                transpose(lhs_group, axes=(0, 2)),
-                dilate(
-                    transpose(out_grad_group, axes=(0, 1)),
-                    axes=(0),
-                    dilation=self.stride - 1,
-                ),
-                padding=self.padding,
-                groups=1  # Gradient computation for each group is standard convolution
-            )
-            rhs_grad_g = transpose(rhs_grad_g, axes=(0, 1))
+#             # Compute gradient for weights
+#             rhs_grad_g = conv1d(
+#                 transpose(lhs_group, axes=(0, 2)),
+#                 dilate(
+#                     transpose(out_grad_group, axes=(0, 1)),
+#                     axes=(0),
+#                     dilation=self.stride - 1,
+#                 ),
+#                 padding=self.padding,
+#                 groups=1  # Gradient computation for each group is standard convolution
+#             )
+#             rhs_grad_g = transpose(rhs_grad_g, axes=(0, 1))
 
-            lhs_grad_groups.append(lhs_grad_g)
-            rhs_grad_groups.append(rhs_grad_g)
+#             lhs_grad_groups.append(lhs_grad_g)
+#             rhs_grad_groups.append(rhs_grad_g)
 
-        # TODO check this
-        # Concatenate gradients across groups
-        lhs_grad = concat(lhs_grad_groups, axis=2)
-        rhs_grad = concat(rhs_grad_groups, axis=2)
+#         # TODO check this
+#         # Concatenate gradients across groups
+#         lhs_grad = concat(lhs_grad_groups, axis=2)
+#         rhs_grad = concat(rhs_grad_groups, axis=2)
 
-        return lhs_grad, rhs_grad
+#         return lhs_grad, rhs_grad
     
 
-def conv1d(a, b, stride=1, padding=1, groups=1):
-    return Conv1d(stride, padding, groups)(a, b)
+# def conv1d(a, b, stride=1, padding=1, groups=1):
+#     return Conv1d(stride, padding, groups)(a, b)
 
 # TODO check concat
 class Concat(TensorOp):

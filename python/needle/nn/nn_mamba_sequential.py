@@ -4,8 +4,8 @@ import needle as ndl
 #from needle import Device, Tensor, ops, init
 import needle.init as init
 from needle import ops
-from .nn_basic import Module, Parameter, Linear
-from .nn_conv import Conv1dPad
+from .nn_basic import Module, Parameter, Linear, Sequential
+from .nn_conv import Conv1d
 
 class MambaConfigSeq:
     """
@@ -210,7 +210,7 @@ class SSMBlockSeq(Module):
         self.dt_proj = Linear(config.dt_rank, config.dim_inner, bias=True,
                               device=config.device, dtype=config.dtype)
         # Softplus activation
-        self.activation = Softplus()
+        self.activation = SoftplusSeq()
 
         # Initialize dt_proj weights to preserve variance
         dt_init_std = config.dt_rank**-0.5 * config.dt_scale
@@ -248,9 +248,9 @@ class SSMBlockSeq(Module):
 
         # Optional Layernorms
         if self.config.inner_layernorms:
-            self.dt_layernorm = RMSNorm(config, config.dt_rank)
-            self.B_layernorm = RMSNorm(config, config.dim_state)
-            self.C_layernorm = RMSNorm(config, config.dim_state)
+            self.dt_layernorm = RMSNormSeq(config, config.dt_rank)
+            self.B_layernorm = RMSNormSeq(config, config.dim_state)
+            self.C_layernorm = RMSNormSeq(config, config.dim_state)
         else:
             self.dt_layernorm = None
             self.B_layernorm = None
@@ -379,12 +379,11 @@ class MambaBlockSeq(Module):
                            padding=config.dim_conv-1, groups=config.dim_inner,
                            bias=config.conv_bias, device=config.device, dtype=config.dtype)
         """
-        self.conv_grouped = [Conv1dPad(1, 1, config.dim_conv, padding=config.dim_conv-1,
-                                       bias=config.conv_bias, device=config.device, dtype=config.dtype) 
-                                for _ in range(config.dim_inner)]
+        self.conv = Conv1d(config.dim_inner, config.dim_inner, config.dim_conv, padding=config.dim_conv-1, groups=config.dim_inner,
+                           bias=config.conv_bias, device=config.device, dtype=config.dtype) 
 
         # Activation function is SiLU/swish activation
-        self.activation = SiLU()
+        self.activation = SiLUSeq()
 
         # SSM block
         self.ssm = SSMBlockSeq(config)
@@ -419,11 +418,7 @@ class MambaBlockSeq(Module):
         x = ops.transpose(
             ops.stack(
                 list(ops.split(
-                    ops.stack(
-                        [ops.squeeze(self.conv_grouped[i](ops.unsqueeze(s, 1)), 1)
-                        for i, s in enumerate(ops.split(ops.transpose(x), 1))],
-                        1
-                    ),
+                    self.conv(ops.transpose(x)),
                     2
                 ))[:seq_length],
                 2
@@ -528,7 +523,7 @@ class ResidualBlockSeq(Module):
         super().__init__()
         self.config = config
         self.layer = MambaBlockSeq(config)
-        self.norm = RMSNorm(config, config.dim_model)
+        self.norm = RMSNormSeq(config, config.dim_model)
 
     def forward(self, x):
         """
@@ -581,7 +576,7 @@ class MambaSeq(Module):
     def __init__(self, config: MambaConfigSeq):
         super().__init__()
         self.config = config
-        self.layers = [ResidualBlockSeq(config) for _ in range(config.num_layers)]
+        self.layers = Sequential(*[ResidualBlockSeq(config) for _ in range(config.num_layers)])
 
     def forward(self, x):
         """
@@ -595,10 +590,7 @@ class MambaSeq(Module):
         batch_size, seq_length, dim_model = x.shape
         assert dim_model == self.config.dim_model
 
-        out = x
-        for layer in self.layers:
-            out = layer(x)
-            assert out.shape == (batch_size, seq_length, dim_model)
+        out = self.layers(x)
         return out
 
     def step(self, x, caches):
@@ -615,13 +607,13 @@ class MambaSeq(Module):
         batch_size, seq_length, dim_model = x.shape
         assert dim_model == self.config.dim_model
 
-        for i, layer in enumerate(self.layers):
+        for i, layer in enumerate(self.layers.modules):
             x, caches[i] = layer.step(x, caches[i])
             assert x.shape == (batch_size, seq_length, dim_model)
         return x, caches
 
 
-class RMSNorm(Module):
+class RMSNormSeq(Module):
     def __init__(self, config: MambaConfigSeq, last_dim: int):
         super().__init__()
         self.use_mup = config.mup
@@ -661,7 +653,7 @@ class RMSNorm(Module):
             return output
 
 
-class Softplus(Module):
+class SoftplusSeq(Module):
     def __init__(self, beta=1.0, threshold=20.0):
         self.beta = beta
         self.threshold = threshold
@@ -670,6 +662,6 @@ class Softplus(Module):
         return ops.softplus(x, beta=self.beta, threshold=self.threshold)
 
 
-class SiLU(Module):
+class SiLUSeq(Module):
     def forward(self, x):
         return x / (1 + ops.exp(-x))

@@ -127,22 +127,23 @@ class Conv1d(Module):
                 in_channels * kernel_size // groups, 
                 out_channels * kernel_size // groups, 
                 shape=(kernel_size, in_channels // groups, out_channels // groups), 
-                device=device
+                device=device, requires_grad=True
             )
         )
         
         if bias:
-            bound = 1 / (math.sqrt(in_channels * kernel_size))
+            bound = 1 / (math.sqrt(in_channels * kernel_size // groups))
             self.bias = Parameter(
                 init.rand(
-                    out_channels,
+                    out_channels // groups,
                     low=-1 * bound,
                     high=bound,
                     device=device,
+                    requires_grad=True
                 )
             )
         else:
-            self.bias = init.zeros(out_channels, device=device)
+            self.bias = init.zeros(out_channels // groups, device=device, requires_grad=True)
 
     def forward(self, x: Tensor) -> Tensor:
         K = self.kernel_size
@@ -153,15 +154,16 @@ class Conv1d(Module):
         # For grouped convolution, you might need to modify conv1d to support groups
         # If your current implementation doesn't support groups, you'll need to 
         # implement a custom grouped convolution logic
-        out = ops.conv1d(x, self.weight, stride=self.stride, padding=self.padding, groups=self.groups)
-        
-        bias = ops.broadcast_to(
-            ops.reshape(self.bias, (1, 1, self.out_channels)),
-            out.shape,
-        )
-
-        if bias is not None:
-            out += bias
+        group_size = self.in_channels // self.groups
+        x_split = list(ops.split(x, 2))
+        x_conv = []
+        for i in range(0, self.in_channels, group_size):
+            x_curr = ops.stack(x_split[i*group_size:(i+1)*group_size], 2)
+            x_conv_curr = ops.conv1d(x_curr, self.weight, stride=self.stride, padding=self.padding)
+            bias = ops.broadcast_to(ops.reshape(self.bias, (1, 1, group_size)), x_conv_curr.shape)
+            x_conv_curr += bias
+            x_conv += list(ops.split(x_conv_curr, 2))
+        out = ops.stack(x_conv, 2)
 
         # NHC -> NCH
         return ops.transpose(out, axes=(1, 2))
