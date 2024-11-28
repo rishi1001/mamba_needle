@@ -644,14 +644,14 @@ namespace needle
       const int thid = threadIdx.x;
       const int off = batch_id * dim * seqlen * dstate + dim_id * seqlen * dstate;
 
-      // Load data into shared memory with correct indexing
+      // load data into shared memory
       temp_a[threadIdx.y * n + 2 * thid] = a[off + (2 * thid) * dstate + threadIdx.y];
       temp_a[threadIdx.y * n + 2 * thid + 1] = a[off + (2 * thid + 1) * dstate + threadIdx.y];
 
       temp_x[threadIdx.y * n + 2 * thid] = x[off + (2 * thid) * dstate + threadIdx.y];
       temp_x[threadIdx.y * n + 2 * thid + 1] = x[off + (2 * thid + 1) * dstate + threadIdx.y];
 
-      // Up sweep phase
+      // up sweep
       int offset = 1;
       for (int d = n >> 1; d > 0; d >>= 1)
       {
@@ -667,11 +667,16 @@ namespace needle
         offset *= 2;
       }
 
-      // Clear the last element
-      if (thid == 0)
+      // clear and save the last element
+      scalar_t last = 0;
+      if (2 * thid + 2 >= n)
+      {
+        last = temp_x[threadIdx.y * n + n - 1];
         temp_x[threadIdx.y * n + n - 1] = 0;
+        temp_a[threadIdx.y * n + n - 1] = 1;
+      }
 
-      // Down sweep phase
+      // down sweep
       for (int d = 1; d < n; d *= 2)
       {
         offset >>= 1;
@@ -688,14 +693,14 @@ namespace needle
           temp_a[threadIdx.y * n + ai] = temp_a[threadIdx.y * n + bi];
           temp_x[threadIdx.y * n + ai] = temp_x[threadIdx.y * n + bi];
 
+          temp_x[threadIdx.y * n + bi] = t_x + t_a * temp_x[threadIdx.y * n + bi];
           temp_a[threadIdx.y * n + bi] *= t_a;
-          temp_x[threadIdx.y * n + bi] += temp_a[threadIdx.y * n + bi] * t_x;
         }
       }
 
       __syncthreads();
 
-      // Write back to global memory with inclusive prefix scan
+      // write back
       out[off + (2 * thid) * dstate + threadIdx.y] = temp_x[threadIdx.y * n + 2 * thid + 1];
       if (2 * thid + 2 < n)
       {
@@ -703,7 +708,7 @@ namespace needle
       }
       else
       {
-        out[off + (2 * thid + 1) * dstate + threadIdx.y] = x[off + (2 * thid + 1) * dstate + threadIdx.y] + a[off + (2 * thid + 1) * dstate + threadIdx.y] * temp_x[threadIdx.y * n + 2 * thid + 1];
+        out[off + (2 * thid + 1) * dstate + threadIdx.y] = last;
       }
     }
 
