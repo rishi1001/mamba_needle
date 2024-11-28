@@ -7,6 +7,7 @@ import needle.init as init
 import numpy as np
 # from mambapy.pscan import pscan
 from needle import ops
+from needle.ops import PScan
 from needle.autograd import Tensor
 
 from .nn_basic import Dropout, LayerNorm1d, Linear, Module, Parameter, ReLU, Sequential
@@ -318,23 +319,64 @@ class MambaBlock(Module):
 
         # y : (B, L, ED)
 
-        A = -ops.exp(self.A_log.float())  # (ED, N)
-        D = self.D.float()
 
+        (B_, L, ED) = x.shape
+
+
+        A = -ops.exp(self.A_log)  # (ED, N)
+        D = self.D
+
+        
+        x = x.reshape((-1, self.config.d_inner))  # (B*L, ED)
         deltaBC = self.x_proj(x)  # (B, L, dt_rank+2*N)
+        deltaBC = deltaBC.reshape((B_, L, -1))
+        x = x.reshape((B_, L, -1))
 
         # TODO check split
-        delta, B, C = ops.split(
-            deltaBC,
-            [self.config.dt_rank, self.config.d_state, self.config.d_state],
-            dim=-1,
-        )  # (B, L, dt_rank), (B, L, N), (B, L, N)
+        # delta, B, C = ops.split(
+        #     deltaBC,
+        #     [self.config.dt_rank, self.config.d_state, self.config.d_state],
+        #     axis=-1,
+        # )  # (B, L, dt_rank), (B, L, N), (B, L, N)
+
+        # Get the sizes to split
+        sizes = [self.config.dt_rank, self.config.d_state, self.config.d_state]
+
+        # Compute cumulative indices for slicing manually
+        cumsum_sizes = [0]
+        for size in sizes:
+            cumsum_sizes.append(cumsum_sizes[-1] + size)
+
+        # Slice the tensor manually
+        delta = deltaBC[:, :, cumsum_sizes[0]:cumsum_sizes[1]]  # (B, L, dt_rank)
+        B = deltaBC[:, :, cumsum_sizes[1]:cumsum_sizes[2]]      # (B, L, N)
+        C = deltaBC[:, :, cumsum_sizes[2]:cumsum_sizes[3]]      # (B, L, N)
+
+        # Result: delta, B, C
         delta, B, C = self._apply_layernorms(delta, B, C)
-        delta = self.dt_proj.weight @ delta.transpose(
-            1, 2
-        )  # (ED, dt_rank) @ (B, L, dt_rank) -> (B, ED, L)
+        # delta = self.dt_proj.weight @ delta.transpose((1, 2))  # (ED, dt_rank) @ (B, L, dt_rank) -> (B, ED, L)
         # here we just apply the matrix mul operation of delta = softplus(dt_proj(delta))
         # the rest will be applied later (fused if using cuda)
+
+
+        # Assuming delta has shape (B, L, dt_rank) and self.dt_proj.weight has shape (dt_rank, ED)
+        B_, L, dt_rank = delta.shape
+        _, ED = self.dt_proj.weight.shape
+
+        # Initialize the output tensor with zeros
+        delta_result = init.zeros(B_, ED, L, device=delta.device)
+        delta_result = []
+
+        # Perform batch-wise matrix multiplication
+        for b in range(B_):
+            # Multiply weight (dt_rank, ED) with delta[b].T (dt_rank, L)
+            delta_result.append(self.dt_proj.weight.transpose((0, 1)) @ delta[b].transpose((1, 0)))  # (ED, dt_rank) @ (dt_rank, L))
+            # delta_result[b] = self.dt_proj.weight.transpose((0, 1)) @ delta[b].transpose((1, 0))  # (ED, dt_rank) @ (dt_rank, L)
+
+        delta = ops.stack(delta_result, axis=0)  # (B, ED, L)
+        # Assign the result back to delta
+        # delta = delta_result
+
 
         # choose which selective_scan function to use, according to config
         if self.config.use_cuda:
@@ -359,8 +401,8 @@ class MambaBlock(Module):
             y = y.transpose(1, 2)  # (B, L, ED)
 
         else:
-            delta = delta.transpose(1, 2)
-            delta = self.softplus(delta + self.dt_proj.bias)
+            delta = delta.transpose((1, 2))
+            delta = self.softplus(delta + self.dt_proj.bias.reshape((1, 1, -1)).broadcast_to(delta.shape))
 
             if self.config.pscan:
                 y = self.selective_scan(x, delta, A, B, C, D)
@@ -378,17 +420,21 @@ class MambaBlock(Module):
         # D : (ED)
 
         # y : (B, L, ED)
+        (B_, L, ED) = x.shape
+        N = A.shape[1]
+        # deltaA = ops.exp(ops.unsqueeze(delta, -1) * A.unsqueeze(0).unsqueeze(1).broadcast_to(delta.shape))
+        deltaA = ops.exp(ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N)) * ops.unsqueeze(ops.unsqueeze(A, 0), 1).broadcast_to((B_, L, ED, N)))  # (B, L, ED, N)
+        # deltaB = ops.unsqueeze(delta, -1) * B.unsqueeze(2)  # (B, L, ED, N)
+        deltaB = ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N)) * ops.unsqueeze(B, 2).broadcast_to((B_, L, ED, N))
 
-        deltaA = ops.exp(delta.unsqueeze(-1) * A)  # (B, L, ED, N)
-        deltaB = delta.unsqueeze(-1) * B.unsqueeze(2)  # (B, L, ED, N)
+        BX = deltaB * ops.unsqueeze(x, -1).broadcast_to((B_, L, ED, N))  # (B, L, ED, N)
+        hs = PScan.forward(deltaA, BX)  # (B, L, ED, N)
+        # hs = PScan(deltaA, BX)      # TODO to call forward
 
-        BX = deltaB * (x.unsqueeze(-1))  # (B, L, ED, N)
-
-        hs = ops.pscan(deltaA, BX)
-
-        y = (hs @ C.unsqueeze(-1)).squeeze(
-            3
-        )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
+        # y = (hs @ C.unsqueeze(-1)).squeeze(
+        #     3
+        # )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
+        y = ops.squeeze((hs @ ops.unsqueeze(C, -1)),3)  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
 
         y = y + D * x
 
@@ -586,7 +632,7 @@ class RMSNorm(Module):
 
 class SiLu(Module):
     def forward(self, x: Tensor) -> Tensor:
-        return x * (1 / (1 + ops.exp(-x)))
+        return x / (1 + ops.exp(-x))
 
 
 class Softplus(Module):

@@ -9,6 +9,7 @@ from typing import List, Optional, Tuple, Union
 from ..autograd import NDArray, Op, Tensor, TensorOp, TensorTuple, TensorTupleOp, Value
 from ..backend_selection import BACKEND, array_api
 from .ops_tuple import *
+from .ops_mathematic import *
 
 # import torch
 # import torch.nn.functional as F
@@ -40,13 +41,15 @@ def pad_npo2(X):
         Y : (B, npo2(L), D, N)
     """
 
-    len_npo2 = npo2(X.size(1))
-    pad_tuple = (0, 0, 0, 0, 0, len_npo2 - X.size(1))
+    len_npo2 = npo2(X.shape[1])
+    pad_tuple = (0, 0, 0, 0, 0, len_npo2 - X.shape[1])
     # return F.pad(X, pad_tuple, "constant", 0)
 
     # TODO : check if the custom padding function is correct by checking size
     custom_pad_tuple = convert_to_custom_pad_format(pad_tuple, 4)
+    breakpoint()
     return X.pad(custom_pad_tuple)
+    # return pad(X, custom_pad_tuple, 'constant', 0)
 
 
 class PScan(TensorOp):
@@ -55,6 +58,7 @@ class PScan(TensorOp):
     #     super().__init__()
     #     self.A_in = None
     #     self.X = None
+    saved_tensors = {}
 
 
     @staticmethod
@@ -69,17 +73,19 @@ class PScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, _ = A.size()
+        B, D, L, _ = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
         Aa = A
         Xa = X
         for _ in range(num_steps - 2):
-            T = Xa.size(2)
-            Aa = Aa.reshape(B, D, T // 2, 2, -1)
-            Xa = Xa.reshape(B, D, T // 2, 2, -1)
+            # T = Xa.size(2)
+            T = Xa.shape[2]
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
+            breakpoint()
             # Xa[:, :, :, 1].add_(Aa[:, :, :, 1].mul(Xa[:, :, :, 0]))
             Xa[:, :, :, 1] = Xa[:, :, :, 1] + (Aa[:, :, :, 1] * Xa[:, :, :, 0])
             # Aa[:, :, :, 1].mul_(Aa[:, :, :, 0])
@@ -88,8 +94,9 @@ class PScan(TensorOp):
             Aa = Aa[:, :, :, 1]
             Xa = Xa[:, :, :, 1]
 
+        breakpoint()
         # we have only 4, 2 or 1 nodes left
-        if Xa.size(2) == 4:
+        if Xa.shape[2] == 4:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
             Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 0])
             # Aa[:, :, 1].mul_(Aa[:, :, 0])
@@ -99,7 +106,7 @@ class PScan(TensorOp):
             Xa[:, :, 3] = Xa[:, :, 3] + (
                 Aa[:, :, 3] * (Xa[:, :, 2] + Aa[:, :, 2] * Xa[:, :, 1])
             )
-        elif Xa.size(2) == 2:
+        elif Xa.shape[2] == 2:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
             Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 0])
             return
@@ -118,9 +125,9 @@ class PScan(TensorOp):
             Aa = A[:, :, 2**k - 1 : L : 2**k]
             Xa = X[:, :, 2**k - 1 : L : 2**k]
 
-            T = Xa.size(2)
-            Aa = Aa.reshape(B, D, T // 2, 2, -1)
-            Xa = Xa.reshape(B, D, T // 2, 2, -1)
+            T = Xa.shape[2]
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
             # Xa[:, :, 1:, 0].add_(Aa[:, :, 1:, 0].mul(Xa[:, :, :-1, 1]))
             Xa[:, :, 1:, 0] = Xa[:, :, 1:, 0] + (Aa[:, :, 1:, 0] * Xa[:, :, :-1, 1])
@@ -138,16 +145,16 @@ class PScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, _ = A.size()
+        B, D, L, _ = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
         Aa = A
         Xa = X
         for _ in range(num_steps - 2):
-            T = Xa.size(2)
-            Aa = Aa.reshape(B, D, T // 2, 2, -1)
-            Xa = Xa.reshape(B, D, T // 2, 2, -1)
+            T = Xa.shape[2]
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
             # Xa[:, :, :, 0].add_(Aa[:, :, :, 0].mul(Xa[:, :, :, 1]))
             Xa[:, :, :, 0] = Xa[:, :, :, 0] + (Aa[:, :, :, 0] * Xa[:, :, :, 1])
@@ -158,7 +165,7 @@ class PScan(TensorOp):
             Xa = Xa[:, :, :, 0]
 
         # we have only 4, 2 or 1 nodes left
-        if Xa.size(2) == 4:
+        if Xa.shape[2] == 4:
             # Xa[:, :, 2].add_(Aa[:, :, 2].mul(Xa[:, :, 3]))
             Xa[:, :, 2] = Xa[:, :, 2] + (Aa[:, :, 2] * Xa[:, :, 3])
             # Aa[:, :, 2].mul_(Aa[:, :, 3])
@@ -168,7 +175,7 @@ class PScan(TensorOp):
             Xa[:, :, 0] = Xa[:, :, 0] + (
                 Aa[:, :, 0] * (Xa[:, :, 1] + Aa[:, :, 1] * Xa[:, :, 2])
             )
-        elif Xa.size(2) == 2:
+        elif Xa.shape[2] == 2:
             # Xa[:, :, 0].add_(Aa[:, :, 0].mul(Xa[:, :, 1]))
             Xa[:, :, 0] = Xa[:, :, 0] + (Aa[:, :, 0] * Xa[:, :, 1])
             return
@@ -187,9 +194,9 @@ class PScan(TensorOp):
             Aa = A[:, :, 0 : L : 2**k]
             Xa = X[:, :, 0 : L : 2**k]
 
-            T = Xa.size(2)
-            Aa = Aa.reshape(B, D, T // 2, 2, -1)
-            Xa = Xa.reshape(B, D, T // 2, 2, -1)
+            T = Xa.shape[2]
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
             # Xa[:, :, :-1, 1].add_(Aa[:, :, :-1, 1].mul(Xa[:, :, 1:, 0]))
             Xa[:, :, :-1, 1] = Xa[:, :, :-1, 1] + (Aa[:, :, :-1, 1] * Xa[:, :, 1:, 0])
@@ -197,7 +204,7 @@ class PScan(TensorOp):
             Aa[:, :, :-1, 1] = Aa[:, :, :-1, 1] * Aa[:, :, 1:, 0]
 
     @staticmethod
-    def forward(ctx, A_in, X_in):
+    def forward(A_in, X_in):
         """
         Applies the parallel scan operation, as defined above. Returns a new tensor.
         If you can, privilege sequence lengths that are powers of two.
@@ -210,7 +217,7 @@ class PScan(TensorOp):
             H : (B, L, D, N)
         """
 
-        L = X_in.size(1)
+        L = X_in.shape[1]
 
         # cloning is requiered because of the in-place ops
         if L == npo2(L):
@@ -222,19 +229,21 @@ class PScan(TensorOp):
             X = pad_npo2(X_in)  # (B, npo2(L), D, N)
 
         # prepare tensors
-        A = A.transpose(2, 1)  # (B, D, npo2(L), N)
-        X = X.transpose(2, 1)  # (B, D, npo2(L), N)
+        A = A.transpose((2, 1))  # (B, D, npo2(L), N)
+        X = X.transpose((2, 1))  # (B, D, npo2(L), N)
 
         # parallel scan (modifies X in-place)
         PScan.pscan(A, X)
 
-        ctx.save_for_backward(A_in, X)
+        # ctx.save_for_backward(A_in, X)
+        PScan.saved_tensors['A_in'] = A_in
+        PScan.saved_tensors['X'] = X      
 
         # slice [:, :L] (cut if there was padding)
-        return X.transpose(2, 1)[:, :L]
+        return X.transpose((2, 1))[:, :L]
 
     @staticmethod
-    def backward(ctx, grad_output_in):
+    def backward(grad_output_in):
         """
         Flows the gradient from the output to the input. Returns two new tensors.
 
@@ -246,10 +255,11 @@ class PScan(TensorOp):
             gradA : (B, L, D, N), gradX : (B, L, D, N)
         """
 
-        A_in, X = ctx.saved_tensors
+        # A_in, X = ctx.saved_tensors
+        A_in = PScan.saved_tensors['A_in']
+        X = PScan.saved_tensors['X']
 
-        # TODO do we have size?
-        L = grad_output_in.size(1)
+        L = grad_output_in.shape[1]
 
         # cloning is requiered because of the in-place ops
         if L == npo2(L):
@@ -260,8 +270,8 @@ class PScan(TensorOp):
             A_in = pad_npo2(A_in)  # (B, npo2(L), D, N)
 
         # prepare tensors
-        grad_output = grad_output.transpose(2, 1)
-        A_in = A_in.transpose(2, 1)  # (B, D, npo2(L), N)
+        grad_output = grad_output.transpose((2, 1))
+        A_in = A_in.transpose((2, 1))  # (B, D, npo2(L), N)
 
         # A = torch.nn.functional.pad(A_in[:, :, 1:], (0, 0, 0, 1)) # (B, D, npo2(L), N) shift 1 to the left (see hand derivation)
         custom_pad_tuple = convert_to_custom_pad_format((0, 0, 0, 1), 4)
@@ -278,7 +288,7 @@ class PScan(TensorOp):
         return Q.transpose(2, 1)[:, :L], grad_output.transpose(2, 1)[:, :L]
 
 
-pscan = PScan.apply
+# pscan = PScan.apply
 
 
 def convert_to_custom_pad_format(pad_tuple, num_dims):

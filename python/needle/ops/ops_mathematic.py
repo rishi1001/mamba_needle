@@ -933,3 +933,18 @@ class Unsqueeze(TensorOp):
 def unsqueeze(a, axis):
     return Unsqueeze(axis)(a)
 
+# class Pad(TensorOp):
+#     def __init__(self, pad_width: Tuple[Tuple[int, int], ...], mode: str = "constant", constant_values: Optional[Union[int, float]] = 0):
+#         self.pad_width = pad_width
+#         self.mode = mode
+#         self.constant_values = constant_values
+
+#     def compute(self, a):
+#         return array_api.pad(a, pad_width=self.pad_width, mode=self.mode, constant_values=self.constant_values)
+
+#     def gradient(self, out_grad, node):
+#         return array_api.slice(out_grad, [slice(self.pad_width[i][0], -self.pad_width[i][1]) for i in range(len(self.pad_width))])
+    
+# def pad(a, pad_width, mode="constant", constant_values=0):
+#     return Pad(pad_width, mode, constant_values)(a)
+
