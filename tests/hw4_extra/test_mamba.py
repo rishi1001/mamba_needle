@@ -103,7 +103,7 @@ from simple_ml import train_ptb, evaluate_ptb
 # device = ndl.cuda()
 device = ndl.cpu()
 corpus = ndl.data.Corpus("data/ptb")
-train_data = ndl.data.batchify(corpus.train, batch_size=256, device=device, dtype="float32")
+train_data = ndl.data.batchify(corpus.train, batch_size=8, device=device, dtype="float32")
 # breakpoint()
 
 config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))

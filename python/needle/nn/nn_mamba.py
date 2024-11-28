@@ -121,7 +121,6 @@ class Mamba(Module):
 class ResidualBlockMamba(Module):
     def __init__(self, config: MambaConfig):
         super().__init__()
-        breakpoint()
 
         self.mixer = MambaBlock(config)
         self.norm = RMSNorm(config.d_model, config.rms_norm_eps, config.mup)
@@ -206,7 +205,6 @@ class MambaBlock(Module):
             + math.log(config.dt_min)
         )
         # .clamp(min=config.dt_init_floor)
-        breakpoint()
         dt = ops.clamp(dt, minimum=config.dt_init_floor)
         inv_dt = dt + ops.log(
             -ops.exp(-dt) + 1
@@ -288,17 +286,17 @@ class MambaBlock(Module):
 
         _, L, _ = x.shape
 
+        x = x.reshape((-1, self.config.d_model))  # (B*L, D)
         xz = self.in_proj(x)  # (B, L, 2*ED)
+        xz = xz.reshape((-1, L, 2 * self.config.d_inner))  # (B, L, 2*ED)
         # x, z = xz.chunk(2, dim=-1)  # (B, L, ED), (B, L, ED)
         # TODO check chunk
         x, z = chunk(xz, 2, dim=-1) # (B, L, ED), (B, L, ED)
 
         # x branch
-        x = x.transpose(1, 2)  # (B, ED, L)
-        x = self.conv1d(x)[
-            :, :, :L
-        ]  # depthwise convolution over time, with a short filter
-        x = x.transpose(1, 2)  # (B, L, ED)
+        x = x.transpose((1, 2))  # (B, ED, L)
+        x = self.conv1d(x)[:, :, :L]  # depthwise convolution over time, with a short filter
+        x = x.transpose((1, 2))  # (B, L, ED)
 
         x = self.silu(x)
         y = self.ssm(x, z)
@@ -560,13 +558,14 @@ class RMSNorm(Module):
         # output = x * ops.power_scalar(
         #     ops.summation(ops.power_scalar(x, 2), axes=(1,)), -0.5
         # )
+        tot_dim = len(x.shape) - 1
 
         # Step 1: Compute squared values
         squared = ops.power_scalar(x, 2)
 
         # Step 2: Sum along axis and compute mean
-        summed = ops.summation(squared, axes=(1,))
-        mean = ops.divide_scalar(summed, x.shape[1])  # Compute mean
+        summed = ops.summation(squared, axes=(tot_dim,))
+        mean = ops.divide_scalar(summed, x.shape[tot_dim])  # Compute mean
 
         # Step 3: Add epsilon
         adjusted_mean = ops.add_scalar(mean, self.eps)
@@ -580,7 +579,7 @@ class RMSNorm(Module):
         output = x * ops.unsqueeze(inv_sqrt, -1).broadcast_to(x.shape)
 
         if not self.use_mup:
-            return output * self.weight
+            return output * self.weight.reshape((1, -1)).broadcast_to(x.shape)
         else:
             return output
 
@@ -603,7 +602,18 @@ def chunk(tensor, num_chunks, dim):
     # Ensure the dimension is divisible by the number of chunks
     assert tensor.shape[dim] % num_chunks == 0, "Tensor cannot be evenly split"
     
-    # Use split to divide the tensor
-    chunks = ops.split(tensor, axis=dim, size=chunk_size)
+    # # Use split to divide the tensor
+    # chunks = ops.split(tensor, axis=dim, size=chunk_size)
+
+    # Use slicing to create chunks
+    chunks = []
+    for i in range(num_chunks):
+        # Create a slice for each chunk
+        chunk_slice = [slice(None)] * len(tensor.shape)
+        chunk_slice[dim] = slice(i * chunk_size, (i + 1) * chunk_size)
+        
+        # Select the chunk using the slice
+        chunks.append(tensor[tuple(chunk_slice)])
+    
     
     return chunks

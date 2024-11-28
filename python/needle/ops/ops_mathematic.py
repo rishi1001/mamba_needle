@@ -166,6 +166,10 @@ class Reshape(TensorOp):
         self.shape = shape
 
     def compute(self, a):
+        if -1 in self.shape:
+            new_shape = list(self.shape)
+            new_shape[new_shape.index(-1)] = a.size // -reduce(operator.mul, new_shape)
+            return array_api.reshape(a, new_shape)
         return array_api.reshape(a.compact(), self.shape)
 
     def gradient(self, out_grad, node):
@@ -928,5 +932,4 @@ class Unsqueeze(TensorOp):
 
 def unsqueeze(a, axis):
     return Unsqueeze(axis)(a)
-
 

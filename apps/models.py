@@ -285,7 +285,6 @@ class MambaLMConfig(MambaConfig):
 class MambaLM(nn.Module):
     def __init__(self, lm_config: MambaLMConfig, device=None, dtype="float32"):
         super().__init__()
-        breakpoint()
         self.lm_config = lm_config
         self.config = lm_config.to_mamba_config()
 
@@ -313,6 +312,8 @@ class MambaLM(nn.Module):
         # caches : [cache(layer) for all layers], cache : (h, inputs)
         # TODO add embedding?
         # breakpoint()        # shape ? (B, T, D) or what?
+        # transpose x to (B, T, D) if needed
+        x = x.transpose((0, 1))  
         x = self.embedding(x)           # TODO check if we need a reshape? or transpose?
         x = self.mamba(x)
         x = self.norm_f(x)
