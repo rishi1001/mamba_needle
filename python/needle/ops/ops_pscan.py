@@ -99,9 +99,9 @@ class PScan(TensorOp):
         elif Xa.shape[2] == 2:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
             Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 0])
-            return
+            return Xa
         else:
-            return
+            return Xa
 
         # down sweep (first 2 steps unfolded)
         Aa = A[:, :, 2 ** (num_steps - 2) - 1 : L : 2 ** (num_steps - 2)]
@@ -123,6 +123,8 @@ class PScan(TensorOp):
             Xa[:, :, 1:, 0] = Xa[:, :, 1:, 0] + (Aa[:, :, 1:, 0] * Xa[:, :, :-1, 1])
             # Aa[:, :, 1:, 0].mul_(Aa[:, :, :-1, 1])
             Aa[:, :, 1:, 0] = Aa[:, :, 1:, 0] * Aa[:, :, :-1, 1]
+
+        return Xa
 
 
 def pscan(A, X, use_cuda: bool):

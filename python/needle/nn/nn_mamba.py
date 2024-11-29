@@ -445,12 +445,32 @@ class MambaBlock(Module):
         #     3
         # )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
         y = ops.squeeze(
-            (hs @ ops.unsqueeze(C, -1)), 3
+            self.batched_matmul(hs, ops.unsqueeze(C, -1).transpose()), 3
         )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
 
         y = y + D * x
 
         return y
+
+    def batched_matmul(self, a: Tensor, b_transpose: Tensor) -> Tensor:
+        """
+        batched matrix multiplication;
+        """
+        a_shape = (*a.shape[:-1], 1, *a.shape[-1:])
+        a = a.reshape(a_shape)
+
+        b_transpose_shape = (*b_transpose.shape[:-2], 1, *b_transpose.shape[-2:])
+        b_transpose = b_transpose.reshape(b_transpose_shape)
+
+        broadcast_shape = list(a_shape)
+        broadcast_shape[-2] = b_transpose_shape[-2]
+        a = a.broadcast_to(broadcast_shape)
+
+        broadcast_shape = list(b_transpose_shape)
+        broadcast_shape[-3] = a_shape[-3]
+        b_transpose = b_transpose.broadcast_to(broadcast_shape)
+
+        return (a * b_transpose).sum(len(a.shape) - 1)
 
     def selective_scan_seq(self, x, delta, A, B, C, D):
         # x : (B, L, ED)
