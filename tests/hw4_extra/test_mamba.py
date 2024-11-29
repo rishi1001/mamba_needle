@@ -113,7 +113,7 @@ model = MambaLM(config, device=device)
 train_ptb(
     model,
     train_data,
-    seq_len=20,
+    seq_len=16,
     n_epochs=10,
     device=device,
     lr=0.003,

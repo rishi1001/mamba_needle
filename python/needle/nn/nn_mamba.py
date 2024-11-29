@@ -458,7 +458,7 @@ class MambaBlock(Module):
             self.batched_matmul(hs, ops.unsqueeze(C, -1).transpose()), 3
         )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
 
-        y = y + D * x
+        y = y + D.reshape((1, 1, -1)).broadcast_to(x.shape) * x
 
         return y
 
