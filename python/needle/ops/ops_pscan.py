@@ -8,61 +8,65 @@ from typing import List, Optional, Tuple, Union
 
 from ..autograd import NDArray, Op, Tensor, TensorOp, TensorTuple, TensorTupleOp, Value
 from ..backend_selection import BACKEND, array_api
-from .ops_tuple import *
 from .ops_mathematic import *
-
-# import torch
-# import torch.nn.functional as F
-
-"""
-
-An implementation of the parallel scan operation in PyTorch (Blelloch version).
-Please see docs/pscan.ipynb for a detailed explanation of what happens here.
-
-"""
+from .ops_tuple import *
 
 
-def npo2(len):
-    """
-    Returns the next power of 2 above len
-    """
+class CUDAPScan(TensorOp):
 
-    return 2 ** math.ceil(math.log2(len))
+    def compute(self, A: NDArray, X: NDArray):  # type: ignore
+        # A : (B, L, D, N)
+        # X : (B, L, D, N)
 
+        A = A.permute((0, 2, 1, 3))  # (B, D, L, N)
+        X = X.permute((0, 2, 1, 3))  # (B, D, L, N)
 
-def pad_npo2(X):
-    """
-    Pads input length dim to the next power of 2
+        result = A.pscan(X)
+        return result.permute((0, 2, 1, 3))
 
-    Args:
-        X : (B, L, D, N)
+    def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
+        # A_in : (B, L, D, N)
+        # X_in : (B, L, D, N)
+        # out_grad : (B, L, D, N)
+        # node: (B, L, D, N)
+        A_in, X_in = node.inputs
 
-    Returns:
-        Y : (B, npo2(L), D, N)
-    """
+        out_grad = transpose(out_grad, axes=(1, 2))  # (B, D, L, N)
+        A_in = transpose(A_in, axes=(1, 2))  # (B, D, L, N)
+        result = transpose(node, axes=(1, 2))  # (B, D, L, N)
 
-    len_npo2 = npo2(X.shape[1])
-    pad_tuple = (0, 0, 0, 0, 0, len_npo2 - X.shape[1])
-    # return F.pad(X, pad_tuple, "constant", 0)
+        out_grad = reverse_pscan(A_in, out_grad)
 
-    # TODO : check if the custom padding function is correct by checking size
-    custom_pad_tuple = convert_to_custom_pad_format(pad_tuple, 4)
-    breakpoint()
-    return X.pad(custom_pad_tuple)
-    # return pad(X, custom_pad_tuple, 'constant', 0)
+        Q = init.zeros_like(X_in, device=X_in.device)
+        Q[:, :, 1:, :] = Q[:, :, 1:, :] + (result[:, :, :-1, :] * out_grad[:, :, 1:, :])
 
-
-class PScan(TensorOp):
-
-    # def __init__(self):
-    #     super().__init__()
-    #     self.A_in = None
-    #     self.X = None
-    saved_tensors = {}
+        return Q.transpose(2, 1), out_grad.transpose(2, 1)
 
 
+def cuda_pscan(A, X):
+    return CUDAPScan()(A, X)
+
+
+class CUDAReversePScan(TensorOp):
+
+    def compute(self, A: NDArray, X: NDArray):  # type: ignore
+        # A : (B, D, L, N)
+        # X : (B, D, L, N)
+
+        A = A[:, :, 1:, :].pad(((0, 0), (0, 0), (0, 1), (0, 0)))
+        return A.reverse_pscan(X)
+
+    def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
+        raise NotImplementedError
+
+
+def cuda_reverse_pscan(A, X):
+    return CUDAPScan()(A, X)
+
+
+class CPUPscan:
     @staticmethod
-    def pscan(A, X):
+    def pscan(A: NDArray, X: NDArray):
         # A : (B, D, L, N)
         # X : (B, D, L, N)
 
@@ -73,38 +77,42 @@ class PScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, _ = A.shape
+        B, D, L, N = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
         Aa = A
         Xa = X
         for _ in range(num_steps - 2):
-            # T = Xa.size(2)
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, -1))
-            Xa = Xa.reshape((B, D, T // 2, 2, -1))
+            Aa = Aa.reshape((B, D, T // 2, 2, N))
+            Xa = Xa.reshape((B, D, T // 2, 2, N))
 
             breakpoint()
             # Xa[:, :, :, 1].add_(Aa[:, :, :, 1].mul(Xa[:, :, :, 0]))
-            Xa[:, :, :, 1] = Xa[:, :, :, 1] + (Aa[:, :, :, 1] * Xa[:, :, :, 0])
+            Xa[:, :, :, 1, :] = Xa[:, :, :, 1, :] + (
+                Aa[:, :, :, 1, :] * Xa[:, :, :, 0, :]
+            )
             # Aa[:, :, :, 1].mul_(Aa[:, :, :, 0])
-            Aa[:, :, :, 1] = Aa[:, :, :, 1] * Aa[:, :, :, 0]
+            Aa[:, :, :, 1, :] = Aa[:, :, :, 1, :] * Aa[:, :, :, 0, :]
 
-            Aa = Aa[:, :, :, 1]
-            Xa = Xa[:, :, :, 1]
+            Aa = Aa[:, :, :, 1, :]
+            Xa = Xa[:, :, :, 1, :]
 
         breakpoint()
         # we have only 4, 2 or 1 nodes left
         if Xa.shape[2] == 4:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
-            Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 0])
+            Xa[:, :, 1, :, :] = Xa[:, :, 1, :, :] + (
+                Aa[:, :, 1, :, :] * Xa[:, :, 0, :, :]
+            )
             # Aa[:, :, 1].mul_(Aa[:, :, 0])
-            Aa[:, :, 1] = Aa[:, :, 1] * Aa[:, :, 0]
+            Aa[:, :, 1, :, :] = Aa[:, :, 1, :, :] * Aa[:, :, 0, :, :]
 
             # Xa[:, :, 3].add_(Aa[:, :, 3].mul(Xa[:, :, 2] + Aa[:, :, 2].mul(Xa[:, :, 1])))
-            Xa[:, :, 3] = Xa[:, :, 3] + (
-                Aa[:, :, 3] * (Xa[:, :, 2] + Aa[:, :, 2] * Xa[:, :, 1])
+            Xa[:, :, 3, :, :] = Xa[:, :, 3, :, :] + (
+                Aa[:, :, 3, :, :]
+                * (Xa[:, :, 2, :, :] + Aa[:, :, 2, :, :] * Xa[:, :, 1, :, :])
             )
         elif Xa.shape[2] == 2:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
@@ -126,8 +134,8 @@ class PScan(TensorOp):
             Xa = X[:, :, 2**k - 1 : L : 2**k]
 
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, -1))
-            Xa = Xa.reshape((B, D, T // 2, 2, -1))
+            Aa = Aa.reshape((B, D, T // 2, 2, N))
+            Xa = Xa.reshape((B, D, T // 2, 2, N))
 
             # Xa[:, :, 1:, 0].add_(Aa[:, :, 1:, 0].mul(Xa[:, :, :-1, 1]))
             Xa[:, :, 1:, 0] = Xa[:, :, 1:, 0] + (Aa[:, :, 1:, 0] * Xa[:, :, :-1, 1])
@@ -145,7 +153,7 @@ class PScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, _ = A.shape
+        B, D, L, N = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
@@ -153,8 +161,8 @@ class PScan(TensorOp):
         Xa = X
         for _ in range(num_steps - 2):
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, -1))
-            Xa = Xa.reshape((B, D, T // 2, 2, -1))
+            Aa = Aa.reshape((B, D, T // 2, 2, N))
+            Xa = Xa.reshape((B, D, T // 2, 2, N))
 
             # Xa[:, :, :, 0].add_(Aa[:, :, :, 0].mul(Xa[:, :, :, 1]))
             Xa[:, :, :, 0] = Xa[:, :, :, 0] + (Aa[:, :, :, 0] * Xa[:, :, :, 1])
@@ -236,8 +244,8 @@ class PScan(TensorOp):
         PScan.pscan(A, X)
 
         # ctx.save_for_backward(A_in, X)
-        PScan.saved_tensors['A_in'] = A_in
-        PScan.saved_tensors['X'] = X      
+        PScan.saved_tensors["A_in"] = A_in
+        PScan.saved_tensors["X"] = X
 
         # slice [:, :L] (cut if there was padding)
         return X.transpose((2, 1))[:, :L]
@@ -256,8 +264,8 @@ class PScan(TensorOp):
         """
 
         # A_in, X = ctx.saved_tensors
-        A_in = PScan.saved_tensors['A_in']
-        X = PScan.saved_tensors['X']
+        A_in = PScan.saved_tensors["A_in"]
+        X = PScan.saved_tensors["X"]
 
         L = grad_output_in.shape[1]
 
@@ -275,7 +283,7 @@ class PScan(TensorOp):
 
         # A = torch.nn.functional.pad(A_in[:, :, 1:], (0, 0, 0, 1)) # (B, D, npo2(L), N) shift 1 to the left (see hand derivation)
         custom_pad_tuple = convert_to_custom_pad_format((0, 0, 0, 1), 4)
-        A = A_in[:, :, 1:].pad(custom_pad_tuple)
+        A = A_in[:, :, 1:].pad(custom_pad_tuple)  # DONE
 
         # reverse parallel scan (modifies grad_output in-place)
         PScan.pscan_rev(A, grad_output)
@@ -286,39 +294,3 @@ class PScan(TensorOp):
         Q[:, :, 1:] = Q[:, :, 1:] + (X[:, :, :-1] * grad_output[:, :, 1:])
 
         return Q.transpose(2, 1)[:, :L], grad_output.transpose(2, 1)[:, :L]
-
-
-# pscan = PScan.apply
-
-
-def convert_to_custom_pad_format(pad_tuple, num_dims):
-    """
-    Convert PyTorch-style pad_tuple (which pads from the last dimension)
-    to the custom padding format (left, right) per axis.
-
-    Example:
-    Input: pad_tuple = (0, 0, 1, 1, 0, 0) for a tensor of 4 dimensions.
-    Output: ((0, 0), (0, 0), (1, 1), (0, 0))
-    """
-    assert len(pad_tuple) % 2 == 0, "Padding tuple should have even length."
-
-    # Calculate the number of axes (dimensions)
-    num_axes = len(pad_tuple) // 2
-
-    # Initialize a list to hold the custom padding format
-    custom_pad = []
-
-    # Convert the PyTorch-style padding to your custom format (left, right) per axis
-    for i in range(num_axes):
-        left_padding = pad_tuple[2 * i]
-        right_padding = pad_tuple[2 * i + 1]
-        custom_pad.append((left_padding, right_padding))
-
-    # If the number of dimensions is greater than the pad_tuple size, assume no padding for remaining axes
-    while len(custom_pad) < num_dims:
-        custom_pad.append((0, 0))
-
-    # Reverse the custom_pad list so it matches the order of the tensor dimensions
-    custom_pad.reverse()
-
-    return tuple(custom_pad)
