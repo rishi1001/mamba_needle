@@ -195,6 +195,7 @@ class ReversePScan(TensorOp):
         else:
             return
 
+        # down sweep (first 2 steps unfolded)
         Aa = A[:, :, 0 : L : 2 ** (num_steps - 2)]
         Xa = X[:, :, 0 : L : 2 ** (num_steps - 2)]
         # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 2]))

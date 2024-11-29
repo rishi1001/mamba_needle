@@ -5,10 +5,11 @@ from typing import List, Union
 import needle.backend_ndarray.ndarray as ndarray
 import needle.init as init
 import numpy as np
+
 # from mambapy.pscan import pscan
 from needle import ops
-from needle.ops import PScan
 from needle.autograd import Tensor
+from needle.ops import PScan
 
 from .nn_basic import Dropout, LayerNorm1d, Linear, Module, Parameter, ReLU, Sequential
 from .nn_conv import Conv1d
@@ -94,7 +95,6 @@ class Mamba(Module):
         self.layers = []
         for _ in range(config.n_layers):
             self.layers.append(ResidualBlockMamba(config))
-
 
     def forward(self, x):
         # x : (B, L, D)
@@ -220,18 +220,22 @@ class MambaBlock(Module):
         self.dt_proj.bias.requires_grad = original_requires_grad
         # self.dt_proj.bias._no_reinit = True # initialization would set all Linear.bias to zero, need to mark this one as _no_reinit
         # todo : explain why removed
-        
+
         # S4D real initialization
         # A = torch.arange(1, config.d_state + 1, dtype="float32").repeat(
         #     config.d_inner, 1
         # )
         # TODO verify arange and repeat
         seq = Tensor(
-            ndarray.NDArray(list(range(1, config.d_state + 1))), device=self.dt_proj.bias.device, dtype=self.dt_proj.bias.dtype
+            ndarray.NDArray(list(range(1, config.d_state + 1))),
+            device=self.dt_proj.bias.device,
+            dtype=self.dt_proj.bias.dtype,
         )
 
         # Repeat the sequence along the first dimension (similar to torch.repeat)
-        A = seq.reshape((1, config.d_state)).broadcast_to((config.d_inner, config.d_state))
+        A = seq.reshape((1, config.d_state)).broadcast_to(
+            (config.d_inner, config.d_state)
+        )
         self.A_log = Parameter(
             ops.log(A)
         )  # why store A in log ? to keep A < 0 (cf -torch.exp(...)) ? for gradient stability ?
@@ -292,11 +296,13 @@ class MambaBlock(Module):
         xz = xz.reshape((-1, L, 2 * self.config.d_inner))  # (B, L, 2*ED)
         # x, z = xz.chunk(2, dim=-1)  # (B, L, ED), (B, L, ED)
         # TODO check chunk
-        x, z = chunk(xz, 2, dim=-1) # (B, L, ED), (B, L, ED)
+        x, z = chunk(xz, 2, dim=-1)  # (B, L, ED), (B, L, ED)
 
         # x branch
         x = x.transpose((1, 2))  # (B, ED, L)
-        x = self.conv1d(x)[:, :, :L]  # depthwise convolution over time, with a short filter
+        x = self.conv1d(x)[
+            :, :, :L
+        ]  # depthwise convolution over time, with a short filter
         x = x.transpose((1, 2))  # (B, L, ED)
 
         x = self.silu(x)
@@ -319,14 +325,11 @@ class MambaBlock(Module):
 
         # y : (B, L, ED)
 
-
         (B_, L, ED) = x.shape
-
 
         A = -ops.exp(self.A_log)  # (ED, N)
         D = self.D
 
-        
         x = x.reshape((-1, self.config.d_inner))  # (B*L, ED)
         deltaBC = self.x_proj(x)  # (B, L, dt_rank+2*N)
         deltaBC = deltaBC.reshape((B_, L, -1))
@@ -348,16 +351,15 @@ class MambaBlock(Module):
             cumsum_sizes.append(cumsum_sizes[-1] + size)
 
         # Slice the tensor manually
-        delta = deltaBC[:, :, cumsum_sizes[0]:cumsum_sizes[1]]  # (B, L, dt_rank)
-        B = deltaBC[:, :, cumsum_sizes[1]:cumsum_sizes[2]]      # (B, L, N)
-        C = deltaBC[:, :, cumsum_sizes[2]:cumsum_sizes[3]]      # (B, L, N)
+        delta = deltaBC[:, :, cumsum_sizes[0] : cumsum_sizes[1]]  # (B, L, dt_rank)
+        B = deltaBC[:, :, cumsum_sizes[1] : cumsum_sizes[2]]  # (B, L, N)
+        C = deltaBC[:, :, cumsum_sizes[2] : cumsum_sizes[3]]  # (B, L, N)
 
         # Result: delta, B, C
         delta, B, C = self._apply_layernorms(delta, B, C)
         # delta = self.dt_proj.weight @ delta.transpose((1, 2))  # (ED, dt_rank) @ (B, L, dt_rank) -> (B, ED, L)
         # here we just apply the matrix mul operation of delta = softplus(dt_proj(delta))
         # the rest will be applied later (fused if using cuda)
-
 
         # Assuming delta has shape (B, L, dt_rank) and self.dt_proj.weight has shape (dt_rank, ED)
         B_, L, dt_rank = delta.shape
@@ -370,16 +372,18 @@ class MambaBlock(Module):
         # Perform batch-wise matrix multiplication
         for b in range(B_):
             # Multiply weight (dt_rank, ED) with delta[b].T (dt_rank, L)
-            delta_result.append(self.dt_proj.weight.transpose((0, 1)) @ delta[b].transpose((1, 0)))  # (ED, dt_rank) @ (dt_rank, L))
+            delta_result.append(
+                self.dt_proj.weight.transpose((0, 1)) @ delta[b].transpose((1, 0))
+            )  # (ED, dt_rank) @ (dt_rank, L))
             # delta_result[b] = self.dt_proj.weight.transpose((0, 1)) @ delta[b].transpose((1, 0))  # (ED, dt_rank) @ (dt_rank, L)
 
         delta = ops.stack(delta_result, axis=0)  # (B, ED, L)
         # Assign the result back to delta
         # delta = delta_result
 
-
         # choose which selective_scan function to use, according to config
-        if self.config.use_cuda:
+        # our cuda pscan doesn't handle all of the fanciness of the official Mamba implementation
+        if False:  # self.config.use_cuda:
             # these are unfortunately needed for the selective_scan_cuda function
             x = x.transpose(1, 2)
             B = B.transpose(1, 2)
@@ -402,7 +406,9 @@ class MambaBlock(Module):
 
         else:
             delta = delta.transpose((1, 2))
-            delta = self.softplus(delta + self.dt_proj.bias.reshape((1, 1, -1)).broadcast_to(delta.shape))
+            delta = self.softplus(
+                delta + self.dt_proj.bias.reshape((1, 1, -1)).broadcast_to(delta.shape)
+            )
 
             if self.config.pscan:
                 y = self.selective_scan(x, delta, A, B, C, D)
@@ -423,18 +429,24 @@ class MambaBlock(Module):
         (B_, L, ED) = x.shape
         N = A.shape[1]
         # deltaA = ops.exp(ops.unsqueeze(delta, -1) * A.unsqueeze(0).unsqueeze(1).broadcast_to(delta.shape))
-        deltaA = ops.exp(ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N)) * ops.unsqueeze(ops.unsqueeze(A, 0), 1).broadcast_to((B_, L, ED, N)))  # (B, L, ED, N)
+        deltaA = ops.exp(
+            ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N))
+            * ops.unsqueeze(ops.unsqueeze(A, 0), 1).broadcast_to((B_, L, ED, N))
+        )  # (B, L, ED, N)
         # deltaB = ops.unsqueeze(delta, -1) * B.unsqueeze(2)  # (B, L, ED, N)
-        deltaB = ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N)) * ops.unsqueeze(B, 2).broadcast_to((B_, L, ED, N))
+        deltaB = ops.unsqueeze(delta, -1).broadcast_to((B_, L, ED, N)) * ops.unsqueeze(
+            B, 2
+        ).broadcast_to((B_, L, ED, N))
 
         BX = deltaB * ops.unsqueeze(x, -1).broadcast_to((B_, L, ED, N))  # (B, L, ED, N)
-        hs = PScan.forward(deltaA, BX)  # (B, L, ED, N)
-        # hs = PScan(deltaA, BX)      # TODO to call forward
+        hs = ops.pscan(deltaA, BX, use_cuda=self.config.use_cuda)  # (B, L, ED, N)
 
         # y = (hs @ C.unsqueeze(-1)).squeeze(
         #     3
         # )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
-        y = ops.squeeze((hs @ ops.unsqueeze(C, -1)),3)  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
+        y = ops.squeeze(
+            (hs @ ops.unsqueeze(C, -1)), 3
+        )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
 
         y = y + D * x
 
@@ -644,10 +656,10 @@ class Softplus(Module):
 def chunk(tensor, num_chunks, dim):
     # Calculate size of each chunk
     chunk_size = tensor.shape[dim] // num_chunks
-    
+
     # Ensure the dimension is divisible by the number of chunks
     assert tensor.shape[dim] % num_chunks == 0, "Tensor cannot be evenly split"
-    
+
     # # Use split to divide the tensor
     # chunks = ops.split(tensor, axis=dim, size=chunk_size)
 
@@ -657,9 +669,8 @@ def chunk(tensor, num_chunks, dim):
         # Create a slice for each chunk
         chunk_slice = [slice(None)] * len(tensor.shape)
         chunk_slice[dim] = slice(i * chunk_size, (i + 1) * chunk_size)
-        
+
         # Select the chunk using the slice
         chunks.append(tensor[tuple(chunk_slice)])
-    
-    
+
     return chunks

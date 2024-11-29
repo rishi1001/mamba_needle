@@ -676,10 +676,22 @@ class NDArray:
         assert len(self.shape) == 4
         assert self.shape == other.shape
 
-        B, D, L, N = self.shape
-
         out = NDArray.make(self.shape, device=self.device)
         self.device.pscan(
+            self.compact()._handle,
+            other.compact()._handle,
+            out._handle,
+            self.shape,
+        )
+        return out
+
+    def reverse_pscan(self, other):
+        assert isinstance(other, NDArray)
+        assert len(self.shape) == 4
+        assert self.shape == other.shape
+
+        out = NDArray.make(self.shape, device=self.device)
+        self.device.reverse_pscan(
             self.compact()._handle,
             other.compact()._handle,
             out._handle,
