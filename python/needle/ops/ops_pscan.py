@@ -12,7 +12,10 @@ from .ops_mathematic import *
 from .ops_tuple import *
 
 
-class CUDAPScan(TensorOp):
+class PScan(TensorOp):
+
+    def __init__(self, use_cuda: bool):
+        self.use_cuda = use_cuda
 
     def compute(self, A: NDArray, X: NDArray):  # type: ignore
         # A : (B, L, D, N)
@@ -21,7 +24,11 @@ class CUDAPScan(TensorOp):
         A = A.permute((0, 2, 1, 3))  # (B, D, L, N)
         X = X.permute((0, 2, 1, 3))  # (B, D, L, N)
 
-        result = A.pscan(X)
+        if self.use_cuda:
+            result = A.pscan(X)
+        else:
+            raise NotImplementedError
+
         return result.permute((0, 2, 1, 3))
 
     def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
@@ -35,7 +42,7 @@ class CUDAPScan(TensorOp):
         A_in = transpose(A_in, axes=(1, 2))  # (B, D, L, N)
         result = transpose(node, axes=(1, 2))  # (B, D, L, N)
 
-        out_grad = reverse_pscan(A_in, out_grad)
+        out_grad = reverse_pscan(A_in, out_grad, self.use_cuda)
 
         Q = init.zeros_like(X_in, device=X_in.device)
         Q[:, :, 1:, :] = Q[:, :, 1:, :] + (result[:, :, :-1, :] * out_grad[:, :, 1:, :])
@@ -43,28 +50,41 @@ class CUDAPScan(TensorOp):
         return Q.transpose(2, 1), out_grad.transpose(2, 1)
 
 
-def cuda_pscan(A, X):
-    return CUDAPScan()(A, X)
+def pscan(A, X, use_cuda: bool):
+    return PScan(use_cuda)(A, X)
 
 
-class CUDAReversePScan(TensorOp):
+class ReversePScan(TensorOp):
+
+    def __init__(self, use_cuda: bool):
+        self.use_cuda = use_cuda
 
     def compute(self, A: NDArray, X: NDArray):  # type: ignore
         # A : (B, D, L, N)
         # X : (B, D, L, N)
 
         A = A[:, :, 1:, :].pad(((0, 0), (0, 0), (0, 1), (0, 0)))
-        return A.reverse_pscan(X)
+        if self.use_cuda:
+            return A.reverse_pscan(X)
+        else:
+            raise NotImplementedError
 
     def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
         raise NotImplementedError
 
 
-def cuda_reverse_pscan(A, X):
-    return CUDAPScan()(A, X)
+def reverse_pscan(A, X, use_cuda: bool):
+    return ReversePScan(use_cuda)(A, X)
 
 
 class CPUPscan:
+
+    def compute(self, A: NDArray, X: NDArray) -> NDArray:  # type: ignore
+        pass
+
+    def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
+        raise NotImplementedError
+
     @staticmethod
     def pscan(A: NDArray, X: NDArray):
         # A : (B, D, L, N)
@@ -270,12 +290,8 @@ class CPUPscan:
         L = grad_output_in.shape[1]
 
         # cloning is requiered because of the in-place ops
-        if L == npo2(L):
-            grad_output = grad_output_in.clone()
-            # the next padding will clone A_in
-        else:
-            grad_output = pad_npo2(grad_output_in)  # (B, npo2(L), D, N)
-            A_in = pad_npo2(A_in)  # (B, npo2(L), D, N)
+        grad_output = grad_output_in.clone()
+        # the next padding will clone A_in
 
         # prepare tensors
         grad_output = grad_output.transpose((2, 1))
