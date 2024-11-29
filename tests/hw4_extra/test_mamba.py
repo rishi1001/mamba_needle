@@ -15,7 +15,6 @@ import torch
 from models import LanguageModel
 from simple_ml import *
 
-
 # np.random.seed(3)
 
 # mamba_config = nn.MambaConfig()
@@ -94,22 +93,30 @@ from simple_ml import *
 #     assert not model.training
 
 
-
-import needle as ndl
-sys.path.append('./apps')
+sys.path.append("./apps")
 from models import MambaLM, MambaLMConfig
-from simple_ml import train_ptb, evaluate_ptb
+from simple_ml import evaluate_ptb, train_ptb
 
 # device = ndl.cuda()
 device = ndl.cpu()
 corpus = ndl.data.Corpus("data/ptb")
-train_data = ndl.data.batchify(corpus.train, batch_size=8, device=device, dtype="float32")
+train_data = ndl.data.batchify(
+    corpus.train, batch_size=8, device=device, dtype="float32"
+)
 # breakpoint()
 
 config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))
-model = MambaLM(config)
+model = MambaLM(config, device=device)
 
 # model = LanguageModel(20, len(corpus.dictionary), hidden_size=32, num_layers=1, seq_model='transformer', seq_len=20, device=device)
 
-train_ptb(model, train_data, seq_len=20, n_epochs=10, device=device, lr=0.003, optimizer=ndl.optim.Adam)
+train_ptb(
+    model,
+    train_data,
+    seq_len=20,
+    n_epochs=10,
+    device=device,
+    lr=0.003,
+    optimizer=ndl.optim.Adam,
+)
 evaluate_ptb(model, train_data, seq_len=20, device=device)

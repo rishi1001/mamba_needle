@@ -83,7 +83,7 @@ class MambaConfig:
 
 
 class Mamba(Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfig, device=None):
         super().__init__()
 
         self.config = config
@@ -94,7 +94,7 @@ class Mamba(Module):
         # TODO verify if nn.ModuleList is needed, ie are the weights changing?
         self.layers = []
         for _ in range(config.n_layers):
-            self.layers.append(ResidualBlockMamba(config))
+            self.layers.append(ResidualBlockMamba(config, device=device))
 
     def forward(self, x):
         # x : (B, L, D)
@@ -120,11 +120,13 @@ class Mamba(Module):
 
 
 class ResidualBlockMamba(Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfig, device=None):
         super().__init__()
 
-        self.mixer = MambaBlock(config)
-        self.norm = RMSNorm(config.d_model, config.rms_norm_eps, config.mup)
+        self.mixer = MambaBlock(config, device=device)
+        self.norm = RMSNorm(
+            config.d_model, config.rms_norm_eps, config.mup, device=device
+        )
 
     def forward(self, x):
         # x : (B, L, D)
@@ -148,7 +150,7 @@ class ResidualBlockMamba(Module):
 
 
 class MambaBlock(Module):
-    def __init__(self, config: MambaConfig):
+    def __init__(self, config: MambaConfig, device=None):
         super().__init__()
 
         self.config = config
@@ -156,7 +158,9 @@ class MambaBlock(Module):
         # TODO verify shapes while testing
 
         # projects block input from D to 2*ED (two branches)
-        self.in_proj = Linear(config.d_model, 2 * config.d_inner, bias=config.bias)
+        self.in_proj = Linear(
+            config.d_model, 2 * config.d_inner, bias=config.bias, device=device
+        )
 
         self.conv1d = Conv1d(
             in_channels=config.d_inner,
@@ -165,15 +169,19 @@ class MambaBlock(Module):
             bias=config.conv_bias,
             groups=config.d_inner,
             padding=config.d_conv - 1,
+            device=device,
         )
 
         # projects x to input-dependent delta, B, C
         self.x_proj = Linear(
-            config.d_inner, config.dt_rank + 2 * config.d_state, bias=False
+            config.d_inner,
+            config.dt_rank + 2 * config.d_state,
+            bias=False,
+            device=device,
         )
 
         # projects delta from dt_rank to d_inner
-        self.dt_proj = Linear(config.dt_rank, config.d_inner, bias=True)
+        self.dt_proj = Linear(config.dt_rank, config.d_inner, bias=True, device=device)
 
         # dt initialization
         # dt weights
@@ -183,7 +191,7 @@ class MambaBlock(Module):
             self.dt_proj.weight = init.constant(
                 *self.dt_proj.weight.shape,
                 c=dt_init_std,
-                device=self.dt_proj.weight.device,
+                device=device,
                 dtype=self.dt_proj.weight.dtype,
                 requires_grad=self.dt_proj.weight.requires_grad,
             )
@@ -192,7 +200,7 @@ class MambaBlock(Module):
                 *self.dt_proj.weight.shape,
                 low=-dt_init_std,
                 high=dt_init_std,
-                device=self.dt_proj.weight.device,
+                device=device,
                 dtype=self.dt_proj.weight.dtype,
                 requires_grad=self.dt_proj.weight.requires_grad,
             )
@@ -201,7 +209,7 @@ class MambaBlock(Module):
 
         # delta bias
         dt = ops.exp(
-            init.rand(config.d_inner)
+            init.rand(config.d_inner, device=device)
             * (math.log(config.dt_max) - math.log(config.dt_min))
             + math.log(config.dt_min)
         )
@@ -228,7 +236,7 @@ class MambaBlock(Module):
         # TODO verify arange and repeat
         seq = Tensor(
             ndarray.NDArray(list(range(1, config.d_state + 1))),
-            device=self.dt_proj.bias.device,
+            device=device,
             dtype=self.dt_proj.bias.dtype,
         )
 
@@ -241,22 +249,24 @@ class MambaBlock(Module):
         )  # why store A in log ? to keep A < 0 (cf -torch.exp(...)) ? for gradient stability ?
         self.A_log._no_weight_decay = True
 
-        self.D = Parameter(init.ones(config.d_inner, device=self.A_log.device))
+        self.D = Parameter(init.ones(config.d_inner, device=device))
         self.D._no_weight_decay = True
 
         # projects block output from ED back to D
-        self.out_proj = Linear(config.d_inner, config.d_model, bias=config.bias)
+        self.out_proj = Linear(
+            config.d_inner, config.d_model, bias=config.bias, device=device
+        )
 
         # used in jamba
         if self.config.inner_layernorms:
             self.dt_layernorm = RMSNorm(
-                self.config.dt_rank, config.rms_norm_eps, config.mup
+                self.config.dt_rank, config.rms_norm_eps, config.mup, device=device
             )
             self.B_layernorm = RMSNorm(
-                self.config.d_state, config.rms_norm_eps, config.mup
+                self.config.d_state, config.rms_norm_eps, config.mup, device=device
             )
             self.C_layernorm = RMSNorm(
-                self.config.d_state, config.rms_norm_eps, config.mup
+                self.config.d_state, config.rms_norm_eps, config.mup, device=device
             )
         else:
             self.dt_layernorm = None

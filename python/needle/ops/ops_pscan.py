@@ -21,8 +21,8 @@ class PScan(TensorOp):
         # A : (B, L, D, N)
         # X : (B, L, D, N)
 
-        A = A.permute((0, 2, 1, 3))  # (B, D, L, N)
-        X = X.permute((0, 2, 1, 3))  # (B, D, L, N)
+        A = A.compact().permute((0, 2, 1, 3)).compact()  # (B, D, L, N)
+        X = X.compact().permute((0, 2, 1, 3)).compact()  # (B, D, L, N)
 
         if self.use_cuda:
             result = A.pscan(X)
