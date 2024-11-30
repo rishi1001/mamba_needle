@@ -2,10 +2,9 @@
 """
 
 import math
-from typing import Any, Callable, List
+from typing import List
 
 import needle.init as init
-import numpy as np
 from needle import ops
 from needle.autograd import Tensor
 
@@ -91,17 +90,27 @@ class Linear(Module):
         self.out_features = out_features
 
         self.weight = Parameter(
-            init.kaiming_uniform(in_features, out_features, device=device, dtype=dtype, requires_grad=True)
+            init.kaiming_uniform(
+                in_features,
+                out_features,
+                device=device,
+                dtype=dtype,
+                requires_grad=True,
+            )
         )
         if bias:
             self.bias = Parameter(
                 ops.reshape(
-                    init.kaiming_uniform(out_features, 1, device=device, dtype=dtype, requires_grad=True),
+                    init.kaiming_uniform(
+                        out_features, 1, device=device, dtype=dtype, requires_grad=True
+                    ),
                     (1, out_features),
                 ).detach()
             )
         else:
-            self.bias = init.zeros(1, out_features, device=device, dtype=dtype, requires_grad=True)
+            self.bias = init.zeros(
+                1, out_features, device=device, dtype=dtype, requires_grad=True
+            )
 
     def forward(self, X: Tensor) -> Tensor:
         b = ops.broadcast_to(self.bias, (X.shape[0], self.weight.shape[1]))

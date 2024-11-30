@@ -326,7 +326,9 @@ class MambaBlock(Module):
         z = self.silu(z)
 
         output = y * z
-        output = self.out_proj(output)  # (B, L, D)
+        output = self.out_proj(output.reshape((-1, self.config.d_inner))).reshape(
+            (-1, L, self.config.d_model)
+        )  # (B, L, D)
 
         return output
 

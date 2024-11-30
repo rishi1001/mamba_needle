@@ -127,7 +127,7 @@ class Value:
         *,
         num_outputs: int = 1,
         cached_data: List[object] = None,
-        requires_grad: Optional[bool] = None
+        requires_grad: Optional[bool] = None,
     ):
         global TENSOR_COUNTER
         TENSOR_COUNTER += 1
@@ -205,7 +205,7 @@ class Tensor(Value):
         device: Optional[Device] = None,
         dtype=None,
         requires_grad=True,
-        **kwargs
+        **kwargs,
     ):
         if isinstance(array, Tensor):
             if device is None:
@@ -277,7 +277,7 @@ class Tensor(Value):
         return Tensor.make_const(self.realize_cached_data())
 
     @property
-    def shape(self):
+    def shape(self) -> tuple[int, ...]:
         return self.realize_cached_data().shape
 
     @property
@@ -299,7 +299,7 @@ class Tensor(Value):
             else init.ones(*self.shape, dtype=self.dtype, device=self.device)
         )
         compute_gradient_of_variables(self, out_grad)
-    
+
     # def __getitem__(self, index):
     #     if isinstance(index, tuple):
     #         result = self
@@ -324,7 +324,7 @@ class Tensor(Value):
     #         return needle.ops.Slice(index.start, index.stop, axis=0)(self)
     #     else:
     #         raise TypeError(f"Unsupported index type: {type(index)}")
-        
+
     # def __getitem__(self, index):
     #     if isinstance(index, tuple):
     #         # Handle multi-dimensional indexing
@@ -394,7 +394,7 @@ class Tensor(Value):
     #         return needle.ops.Squeeze(axis=0)(result)
     #     else:
     #         raise TypeError(f"Unsupported index type: {type(index)}")
-        
+
     def __getitem__(self, index):
         def normalize_index(idx, dim_size, axis):
             if isinstance(idx, slice):
@@ -402,24 +402,26 @@ class Tensor(Value):
                 step = step or 1
                 if step <= 0:
                     raise ValueError("Negative or zero step size is not supported.")
-                
+
                 # Handle None and negative indices
                 if start is None:
                     start = 0 if step > 0 else dim_size - 1
                 elif start < 0:
                     start = max(0, start + dim_size)
-                    
+
                 if stop is None:
                     stop = dim_size if step > 0 else -1
                 elif stop < 0:
                     stop = max(0, stop + dim_size)
-                    
+
                 return needle.ops.StridedSlice(start, stop, step, axis=axis)
             elif isinstance(idx, int):
                 if idx < 0:
                     idx = dim_size + idx
                 if not (0 <= idx < dim_size):
-                    raise IndexError(f"Index {idx} is out of bounds for axis {axis} with size {dim_size}")
+                    raise IndexError(
+                        f"Index {idx} is out of bounds for axis {axis} with size {dim_size}"
+                    )
                 return idx
             else:
                 raise TypeError(f"Unsupported index type: {type(idx)}")
@@ -427,29 +429,35 @@ class Tensor(Value):
         # Handle single index
         if not isinstance(index, tuple):
             index = (index,)
-            
+
         # Handle Ellipsis
         if Ellipsis in index:
             raise NotImplementedError("Ellipsis indexing is not yet supported")
-            
+
         result = self
         offset = 0  # Adjust for dimension reduction
-        
+
         for axis, idx in enumerate(index):
             if isinstance(idx, slice):
-                result = normalize_index(idx, result.shape[axis - offset], axis - offset)(result)
+                result = normalize_index(
+                    idx, result.shape[axis - offset], axis - offset
+                )(result)
             elif isinstance(idx, int):
-                normalized_idx = normalize_index(idx, result.shape[axis - offset], axis - offset)
-                result = needle.ops.StridedSlice(normalized_idx, normalized_idx + 1, 1, axis=axis - offset)(result)
+                normalized_idx = normalize_index(
+                    idx, result.shape[axis - offset], axis - offset
+                )
+                result = needle.ops.StridedSlice(
+                    normalized_idx, normalized_idx + 1, 1, axis=axis - offset
+                )(result)
                 result = needle.ops.Squeeze(axis=axis - offset)(result)
                 offset += 1
-                
+
         return result
-        
+
     def __setitem__(self, index, value):
         """
         Set values of the tensor at the specified index/slice.
-        
+
         Parameters:
         -----------
         index : int, slice, or tuple of int/slice
@@ -459,21 +467,21 @@ class Tensor(Value):
         """
         if isinstance(value, Tensor):
             value = value.realize_cached_data()
-        
+
         # Ensure we're working with the actual data
         if self.cached_data is None:
             self.realize_cached_data()
-            
+
         # Convert single index/slice to tuple form for unified handling
         if not isinstance(index, tuple):
             index = (index,)
-        
+
         # Handle the assignment using numpy's advanced indexing
         try:
             self.cached_data[index] = value
         except (IndexError, ValueError) as e:
             raise ValueError(f"Invalid indexing or shape mismatch: {str(e)}")
-        
+
     # def __setitem__(self, index, value):
     #     """
     #     Set the values of the tensor at the specified index.
@@ -521,8 +529,6 @@ class Tensor(Value):
     #         self.cached_data = result.realize_cached_data()
     #     else:
     #         raise TypeError(f"Unsupported index type: {type(index)}")
-
-
 
     def __repr__(self):
         return "needle.Tensor(" + str(self.realize_cached_data()) + ")"
