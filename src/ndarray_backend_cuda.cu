@@ -778,8 +778,8 @@ namespace needle
 
         if (thid < d)
         {
-          const int ai = offset * (2 * thid) - 1;
-          const int bi = offset * (2 * thid + 1) - 1;
+          const int ai = offset * (2 * thid + 1);
+          const int bi = offset * (2 * thid);
 
           const scalar_t t_a = temp_a[threadIdx.y * n + bi];
           const scalar_t t_x = temp_x[threadIdx.y * n + bi];
