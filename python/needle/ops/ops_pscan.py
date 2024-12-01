@@ -31,7 +31,7 @@ class PScan(TensorOp):
 
         return result.permute((0, 2, 1, 3))
 
-    def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
+    def gradient(self, out_grad: Value, node: Value):
         # A_in : (B, L, D, N)
         # X_in : (B, L, D, N)
         # out_grad : (B, L, D, N)
@@ -45,8 +45,6 @@ class PScan(TensorOp):
         out_grad = reverse_pscan(A_in, out_grad, self.use_cuda)
 
         Q = init.zeros_like(A_in, device=A_in.device)
-
-        print(Q.shape, (result[:, :, :-1, :] * out_grad[:, :, 1:, :]).shape)
         Q[:, :, 1:, :] = Q[:, :, 1:, :] + (result[:, :, :-1, :] * out_grad[:, :, 1:, :])
 
         return Q.transpose((2, 1)), out_grad.transpose((2, 1))
