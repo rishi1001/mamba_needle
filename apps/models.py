@@ -10,7 +10,7 @@ import needle as ndl
 import needle.init as init
 import needle.nn as nn
 import numpy as np
-from needle.nn import Mamba, MambaConfig, RMSNorm
+from needle.nn import Mamba, MambaConfig, RMSNorm, MambaSeq
 
 np.random.seed(0)
 
@@ -287,7 +287,7 @@ class MambaLMConfig(MambaConfig):
 
 
 class MambaLM(nn.Module):
-    def __init__(self, lm_config: MambaLMConfig, device=None, dtype="float32"):
+    def __init__(self, lm_config: MambaLMConfig, device=None, dtype="float32", sequential=False):
         super().__init__()
         self.device = device
         self.lm_config = lm_config
@@ -296,13 +296,16 @@ class MambaLM(nn.Module):
         self.embedding = nn.Embedding(
             self.lm_config.vocab_size, self.config.d_model, device=device, dtype=dtype
         )
-        self.mamba = Mamba(self.config, device=device)
+        if sequential:
+            self.mamba = MambaSeq(self.config, device=device)
+        else:
+            self.mamba = Mamba(self.config, device=device)
         self.norm_f = RMSNorm(self.config.d_model, device=device)
 
-        self.lm_head = nn.Linear(
-            self.config.d_model, self.lm_config.vocab_size, bias=False, device=device
-        )
-        self.lm_head.weight = self.embedding.weight
+        # self.lm_head = nn.Linear(
+        #     self.config.d_model, self.lm_config.vocab_size, bias=False, device=device
+        # )
+        # self.lm_head.weight = self.embedding.weight
 
     def init_caches(self):
         # hs will be initialized to zeros, so do inputs
@@ -334,13 +337,15 @@ class MambaLM(nn.Module):
         # TODO add embedding?
         # breakpoint()        # shape ? (B, T, D) or what?
         # transpose x to (B, T, D) if needed
+
         x = x.transpose((0, 1))
         x = self.embedding(x)  # TODO check if we need a reshape? or transpose?
         x = self.mamba(x)
         x = self.norm_f(x)
-        logits = self.lm_head(x)
-
-        return logits
+        logits = (
+            x.reshape((-1, self.config.d_model)) @ self.embedding.weight.transpose()
+        )
+        return logits, None
 
 
 if __name__ == "__main__":

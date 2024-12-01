@@ -68,7 +68,6 @@ class Adam(Optimizer):
     def step(self):
         self.t += 1
         for param in self.params:
-            print(param.detach())
             u = param.grad.detach() + self.weight_decay * param.data
             v = (1 - self.beta2) * ndl.ops.power_scalar(u, 2)
             u = (1 - self.beta1) * u

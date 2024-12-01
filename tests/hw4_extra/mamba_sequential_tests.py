@@ -4,15 +4,45 @@ sys.path.append("./apps")
 sys.path.append("./")
 import numpy as np
 import needle as ndl
-from needle.nn import MambaConfigSeq, MambaSeq, SoftmaxLoss, SelectiveScanSeq, SSMBlockSeq, MambaBlockSeq, ResidualBlockSeq
+from needle.nn import MambaConfig, MambaSeq, SoftmaxLoss, SelectiveScanSeq, SSMBlockSeq, MambaBlockSeq, ResidualBlockSeq
 import gc
 from needle.data.datasets.ptb_dataset import get_batch
 #from simple_ml import train_ptb, evaluate_ptb
 
+from models import MambaLM, MambaLMConfig
+from simple_ml import evaluate_ptb, train_ptb
+
+# device = ndl.cuda()
+device = ndl.cpu()
+corpus = ndl.data.Corpus("data/ptb")
+train_data = ndl.data.batchify(
+    corpus.train, batch_size=8, device=device, dtype="float32"
+)
+# breakpoint()
+
+config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))
+model = MambaLM(config, device=device, sequential=True)
+
+# model = LanguageModel(20, len(corpus.dictionary), hidden_size=32, num_layers=1, seq_model='transformer', seq_len=20, device=device)
+
+train_ptb(
+    model,
+    train_data,
+    seq_len=16,
+    n_epochs=10,
+    device=device,
+    lr=0.003,
+    optimizer=ndl.optim.Adam,
+)
+evaluate_ptb(model, train_data, seq_len=20, device=device)
+
+
+
+"""
 device = ndl.cpu()
 corpus = ndl.data.Corpus("data/ptb")
 train_data = ndl.data.batchify(corpus.train, batch_size=12, device=device, dtype="float32")
-config = MambaConfigSeq(dim_model=28, num_layers=3, dim_state=12, device=device)
+config = MambaConfig(d_model=28, n_layers=3, d_state=12)
 
 selectiveScan = SelectiveScanSeq(config)
 optim = ndl.optim.Adam(selectiveScan.parameters())
@@ -61,24 +91,17 @@ optim.step()
 
 mamba = MambaSeq(config)
 optim = ndl.optim.Adam(mamba.parameters())
-x = ndl.Tensor(np.random.rand(12, 8, 28), device=device, dtype="float32", requires_grad=True)
-out = mamba(x)
-print(out)
-optim.reset_grad()
-out.backward()
-print(out.grad)
-optim.step()
-
-model = MambaSeq(config)
-print(len(model.parameters()))
-optim = ndl.optim.Adam(model.parameters())
-optim.reset_grad()
-out = model(ndl.Tensor(np.random.rand(12, 8, 28), device=device, dtype="float32", requires_grad=True))
-#loss_fn = SoftmaxLoss()
-#loss = loss_fn(out, np.random.randint(0, high=28, size=(12, 8)))
-out.backward()
-print(out.grad)
-optim.step()
-
+print(mamba.parameters()[0])
+for i in range(10):
+    x = ndl.Tensor(np.random.rand(12, 8, 28), device=device, dtype="float32", requires_grad=True)
+    out = mamba(x)
+    #print(out)
+    optim.reset_grad()
+    out.backward()
+    #print(out.grad)
+    optim.step()
+print(mamba.parameters()[0])
+"""
 #train_ptb(model, train_data, seq_len=8, n_epochs=10, device=device, lr=0.003, optimizer=ndl.optim.Adam)
 #evaluate_ptb(model, train_data, seq_len=8, device=device)
+
