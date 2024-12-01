@@ -342,10 +342,9 @@ class MambaLM(nn.Module):
         x = self.embedding(x)  # TODO check if we need a reshape? or transpose?
         x = self.mamba(x)
         x = self.norm_f(x)
-        logits = (
-            x.reshape((-1, self.config.d_model)) @ self.embedding.weight.transpose()
-        )
-        return logits, None
+        logits = self.lm_head(x)
+
+        return logits
 
 
 if __name__ == "__main__":
