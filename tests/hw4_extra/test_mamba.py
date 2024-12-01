@@ -99,7 +99,7 @@ from simple_ml import evaluate_ptb, train_ptb
 
 # device = ndl.cuda()
 device = ndl.cpu()
-corpus = ndl.data.Corpus("data/ptb")
+corpus = ndl.data.Corpus("data/ptb", max_lines=100)
 train_data = ndl.data.batchify(
     corpus.train, batch_size=8, device=device, dtype="float32"
 )

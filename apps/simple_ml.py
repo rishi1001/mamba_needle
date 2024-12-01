@@ -15,6 +15,7 @@ import needle.nn as nn
 from needle.data.datasets.ptb_dataset import get_batch
 
 from apps.models import *
+from tqdm import tqdm
 
 device = ndl.cpu()
 
@@ -213,7 +214,7 @@ def epoch_general_ptb(
     tot_batch_loss = 0
     tot_correct = 0
 
-    for i in range(0, nbatch - 1, seq_len):
+    for i in tqdm(range(0, nbatch - 1, seq_len)):
         if opt is not None:
             opt.reset_grad()
 
@@ -241,6 +242,7 @@ def epoch_general_ptb(
         gc.collect()
 
     avg_batch_loss = tot_batch_loss / tot_num_batches
+    print("avg_batch_loss: ", avg_batch_loss)
     avg_batch_acc = tot_correct / tot_data
     return avg_batch_acc, avg_batch_loss
 
