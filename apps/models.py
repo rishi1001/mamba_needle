@@ -299,10 +299,10 @@ class MambaLM(nn.Module):
         self.mamba = Mamba(self.config, device=device)
         self.norm_f = RMSNorm(self.config.d_model, device=device)
 
-        self.lm_head = nn.Linear(
-            self.config.d_model, self.lm_config.vocab_size, bias=False, device=device
-        )
-        self.lm_head.weight = self.embedding.weight
+        # self.lm_head = nn.Linear(
+        #     self.config.d_model, self.lm_config.vocab_size, bias=False, device=device
+        # )
+        # self.lm_head.weight = self.embedding.weight
 
     def init_caches(self):
         # hs will be initialized to zeros, so do inputs
@@ -338,9 +338,11 @@ class MambaLM(nn.Module):
         x = self.embedding(x)  # TODO check if we need a reshape? or transpose?
         x = self.mamba(x)
         x = self.norm_f(x)
-        logits = self.lm_head(x)
 
-        return logits
+        logits = (
+            x.reshape((-1, self.config.d_model)) @ self.embedding.weight.transpose()
+        )
+        return logits, None
 
 
 if __name__ == "__main__":
