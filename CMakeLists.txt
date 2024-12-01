@@ -3,14 +3,9 @@ project(needle C CXX)
 cmake_policy(SET CMP0146 OLD)
 
 # find correct version of Python
-# execute_process(COMMAND python3-config --prefix
-#   OUTPUT_VARIABLE Python_ROOT_DIR)
-set(Python_ROOT_DIR, "/Users/saketramdurbha/repos/mamba_needle/venv/bin")
-set(Python_EXECUTABLE, "/Users/saketramdurbha/repos/mamba_needle/venv/bin/python3")
-
-find_package (Python3 3.10 EXACT COMPONENTS Interpreter)
-
-# find_package(Python3 3.10 COMPONENTS Development Interpreter REQUIRED)
+execute_process(COMMAND python3-config --prefix
+  OUTPUT_VARIABLE Python_ROOT_DIR)
+find_package(Python COMPONENTS Development Interpreter REQUIRED)
 include_directories(${Python_INCLUDE_DIRS})
 
 # find pybind
@@ -90,3 +85,4 @@ if(CUDA_FOUND)
 )
 
 endif()
+
