@@ -44,10 +44,12 @@ class PScan(TensorOp):
 
         out_grad = reverse_pscan(A_in, out_grad, self.use_cuda)
 
-        Q = init.zeros_like(X_in, device=X_in.device)
+        Q = init.zeros_like(A_in, device=A_in.device)
+
+        print(Q.shape, (result[:, :, :-1, :] * out_grad[:, :, 1:, :]).shape)
         Q[:, :, 1:, :] = Q[:, :, 1:, :] + (result[:, :, :-1, :] * out_grad[:, :, 1:, :])
 
-        return Q.transpose(2, 1), out_grad.transpose(2, 1)
+        return Q.transpose((2, 1)), out_grad.transpose((2, 1))
 
     @staticmethod
     def cpu_pscan(A: NDArray, X: NDArray) -> NDArray:  # type: ignore
@@ -142,7 +144,7 @@ class ReversePScan(TensorOp):
 
         A = A[:, :, 1:, :].pad(((0, 0), (0, 0), (0, 1), (0, 0)))
         if self.use_cuda:
-            return A.reverse_pscan(X)
+            return A.compact().reverse_pscan(X.compact())
         else:
             return self.cpu_pscan_rev(A, X)
 
