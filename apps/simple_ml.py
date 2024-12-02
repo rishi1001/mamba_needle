@@ -13,9 +13,9 @@ import time
 import needle as ndl
 import needle.nn as nn
 from needle.data.datasets.ptb_dataset import get_batch
+from tqdm import tqdm
 
 from apps.models import *
-from tqdm import tqdm
 
 device = ndl.cpu()
 
@@ -222,7 +222,7 @@ def epoch_general_ptb(
         if batch_x.shape[0] != seq_len:
             continue
         # shape of batch_x: (seq_len, batch_size); seq_len = 20, batch_size = 8
-        out, _ = model(batch_x)         
+        out, _ = model(batch_x)
         logits = out.numpy()
 
         l = loss_fn(out, batch_y)
@@ -283,6 +283,8 @@ def train_ptb(
     np.random.seed(4)
 
     opt = optimizer(model.parameters(), lr=lr, weight_decay=weight_decay)
+
+    train_errors, train_losses = [], []
     for e in range(n_epochs):
         train_err, train_loss = epoch_general_ptb(
             data,
@@ -295,7 +297,10 @@ def train_ptb(
             dtype=dtype,
         )
 
-    return train_err, train_loss
+        train_errors.append(train_err)
+        train_losses.append(train_loss)
+
+    return train_errors, train_losses
 
 
 def evaluate_ptb(
