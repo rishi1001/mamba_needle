@@ -250,15 +250,12 @@ class NDArray:
         Returns:
             NDArray : reshaped array; this will point to thep
         """
-
-        
-
         if -1 in new_shape:
             new_shape = list(new_shape)
             new_shape[new_shape.index(-1)] = self.size // -reduce(
                 operator.mul, new_shape
             )
-        
+
         if prod(self._shape) != prod(new_shape):
             raise ValueError
 
