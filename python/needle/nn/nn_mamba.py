@@ -451,7 +451,8 @@ class MambaBlock(Module):
         ).broadcast_to((B_, L, ED, N))
 
         BX = deltaB * ops.unsqueeze(x, -1).broadcast_to((B_, L, ED, N))  # (B, L, ED, N)
-        hs = ops.pscan(deltaA, BX, use_cuda=self.config.use_cuda)  # (B, L, ED, N)
+        # hs = ops.pscan(deltaA, BX, use_cuda=self.config.use_cuda)  # (B, L, ED, N)
+        hs = ops.pscan(deltaA, BX, use_cuda=False)  # (B, L, ED, N)
 
         # y = (hs @ C.unsqueeze(-1)).squeeze(
         #     3

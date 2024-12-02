@@ -219,6 +219,8 @@ def epoch_general_ptb(
             opt.reset_grad()
 
         batch_x, batch_y = get_batch(data, i, seq_len, device=device, dtype=dtype)
+        if batch_x.shape[0] != seq_len:
+            continue
         # shape of batch_x: (seq_len, batch_size); seq_len = 20, batch_size = 8
         out, _ = model(batch_x)         
         logits = out.numpy()

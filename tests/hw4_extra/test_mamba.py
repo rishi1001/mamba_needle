@@ -119,4 +119,4 @@ train_ptb(
     lr=0.003,
     optimizer=ndl.optim.Adam,
 )
-evaluate_ptb(model, train_data, seq_len=20, device=device)
+evaluate_ptb(model, train_data, seq_len=16, device=device)
