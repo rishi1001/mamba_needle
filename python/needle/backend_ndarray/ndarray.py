@@ -254,6 +254,12 @@ class NDArray:
         if prod(self._shape) != prod(new_shape):
             raise ValueError
 
+        if -1 in new_shape:
+            new_shape = list(new_shape)
+            new_shape[new_shape.index(-1)] = self.size // -reduce(
+                operator.mul, new_shape
+            )
+
         suffix = 1
         new_strides = []
         for s in reversed(new_shape):

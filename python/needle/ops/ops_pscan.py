@@ -61,7 +61,7 @@ class PScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, N = A.shape
+        B, D, L, _ = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
@@ -69,8 +69,13 @@ class PScan(TensorOp):
         Xa = X
         for _ in range(num_steps - 2):
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, N))
-            Xa = Xa.reshape((B, D, T // 2, 2, N))
+            print(Xa.shape, (B, D, T // 2, 2, -1))
+            Aa = Aa.reshape(
+                (B, D, T // 2, 2, -1)
+            )  # this should be a view with the same handle
+            Xa = Xa.reshape(
+                (B, D, T // 2, 2, -1)
+            )  # this should be a view with the same handle
 
             # Xa[:, :, :, 1].add_(Aa[:, :, :, 1].mul(Xa[:, :, :, 0]))
             Xa[:, :, :, 1, :] = Xa[:, :, :, 1, :] + (
@@ -99,32 +104,30 @@ class PScan(TensorOp):
         elif Xa.shape[2] == 2:
             # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 0]))
             Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 0])
-            return Xa
+            return Xa.reshape((B, D, L, -1))
         else:
-            return Xa
+            return Xa.reshape((B, D, L, -1))
 
         # down sweep (first 2 steps unfolded)
-        Aa = A[:, :, 2 ** (num_steps - 2) - 1 : L : 2 ** (num_steps - 2)]
-        Xa = X[:, :, 2 ** (num_steps - 2) - 1 : L : 2 ** (num_steps - 2)]
-        # Xa[:, :, 2].add_(Aa[:, :, 2].mul(Xa[:, :, 1]))
-        Xa[:, :, 2] = Xa[:, :, 2] + (Aa[:, :, 2] * Xa[:, :, 1])
-        # Aa[:, :, 2].mul_(Aa[:, :, 1])
-        Aa[:, :, 2] = Aa[:, :, 2] * Aa[:, :, 1]
+        Aa = A[:, :, 2 ** (num_steps - 2) - 1 : L : 2 ** (num_steps - 2), :]
+        Xa = X[:, :, 2 ** (num_steps - 2) - 1 : L : 2 ** (num_steps - 2), :]
+        Xa[:, :, 2, :] = Xa[:, :, 2, :] + (Aa[:, :, 2, :] * Xa[:, :, 1, :])
+        Aa[:, :, 2, :] = Aa[:, :, 2, :] * Aa[:, :, 1, :]
 
         for k in range(num_steps - 3, -1, -1):
-            Aa = A[:, :, 2**k - 1 : L : 2**k]
-            Xa = X[:, :, 2**k - 1 : L : 2**k]
+            Aa = A[:, :, 2**k - 1 : L : 2**k, :]
+            Xa = X[:, :, 2**k - 1 : L : 2**k, :]
 
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, N))
-            Xa = Xa.reshape((B, D, T // 2, 2, N))
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
-            # Xa[:, :, 1:, 0].add_(Aa[:, :, 1:, 0].mul(Xa[:, :, :-1, 1]))
-            Xa[:, :, 1:, 0] = Xa[:, :, 1:, 0] + (Aa[:, :, 1:, 0] * Xa[:, :, :-1, 1])
-            # Aa[:, :, 1:, 0].mul_(Aa[:, :, :-1, 1])
-            Aa[:, :, 1:, 0] = Aa[:, :, 1:, 0] * Aa[:, :, :-1, 1]
+            Xa[:, :, 1:, 0, :] = Xa[:, :, 1:, 0, :] + (
+                Aa[:, :, 1:, 0, :] * Xa[:, :, :-1, 1, :]
+            )
+            Aa[:, :, 1:, 0, :] = Aa[:, :, 1:, 0, :] * Aa[:, :, :-1, 1, :]
 
-        return Xa
+        return Xa.reshape((B, D, L, -1))
 
 
 def pscan(A, X, use_cuda: bool):
@@ -160,7 +163,7 @@ class ReversePScan(TensorOp):
 
         # only supports L that is a power of two (mainly for a clearer code)
 
-        B, D, L, N = A.shape
+        B, D, L, _ = A.shape
         num_steps = int(math.log2(L))
 
         # up sweep (last 2 steps unfolded)
@@ -168,55 +171,57 @@ class ReversePScan(TensorOp):
         Xa = X
         for _ in range(num_steps - 2):
             T = Xa.shape[2]
-            Aa = Aa.reshape((B, D, T // 2, 2, N))
-            Xa = Xa.reshape((B, D, T // 2, 2, N))
+            Aa = Aa.reshape((B, D, T // 2, 2, -1))
+            Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
-            # Xa[:, :, :, 0].add_(Aa[:, :, :, 0].mul(Xa[:, :, :, 1]))
-            Xa[:, :, :, 0] = Xa[:, :, :, 0] + (Aa[:, :, :, 0] * Xa[:, :, :, 1])
-            # Aa[:, :, :, 0].mul_(Aa[:, :, :, 1])
-            Aa[:, :, :, 0] = Aa[:, :, :, 0] * Aa[:, :, :, 1]
+            Xa[:, :, :, 0, :] = Xa[:, :, :, 0, :] + (
+                Aa[:, :, :, 0, :] * Xa[:, :, :, 1, :]
+            )
+            Aa[:, :, :, 0, :] = Aa[:, :, :, 0, :] * Aa[:, :, :, 1, :]
 
-            Aa = Aa[:, :, :, 0]
-            Xa = Xa[:, :, :, 0]
+            Aa = Aa[:, :, :, 0, :]
+            Xa = Xa[:, :, :, 0, :]
 
         # we have only 4, 2 or 1 nodes left
         if Xa.shape[2] == 4:
-            # Xa[:, :, 2].add_(Aa[:, :, 2].mul(Xa[:, :, 3]))
-            Xa[:, :, 2] = Xa[:, :, 2] + (Aa[:, :, 2] * Xa[:, :, 3])
-            # Aa[:, :, 2].mul_(Aa[:, :, 3])
-            Aa[:, :, 2] = Aa[:, :, 2] * Aa[:, :, 3]
+            Xa[:, :, 2, :, :] = Xa[:, :, 2, :, :] + (
+                Aa[:, :, 2, :, :] * Xa[:, :, 3, :, :]
+            )
+            Aa[:, :, 2, :, :] = Aa[:, :, 2, :, :] * Aa[:, :, 3, :, :]
 
-            # Xa[:, :, 0].add_(Aa[:, :, 0].mul(Xa[:, :, 1].add(Aa[:, :, 1].mul(Xa[:, :, 2]))))
-            Xa[:, :, 0] = Xa[:, :, 0] + (
-                Aa[:, :, 0] * (Xa[:, :, 1] + Aa[:, :, 1] * Xa[:, :, 2])
+            Xa[:, :, 0, :, :] = Xa[:, :, 0, :, :] + (
+                Aa[:, :, 0, :, :]
+                * (Xa[:, :, 1, :, :] + Aa[:, :, 1, :, :] * Xa[:, :, 2, :, :])
             )
         elif Xa.shape[2] == 2:
-            # Xa[:, :, 0].add_(Aa[:, :, 0].mul(Xa[:, :, 1]))
-            Xa[:, :, 0] = Xa[:, :, 0] + (Aa[:, :, 0] * Xa[:, :, 1])
-            return
+            Xa[:, :, 0, :, :] = Xa[:, :, 0, :, :] + (
+                Aa[:, :, 0, :, :] * Xa[:, :, 1, :, :]
+            )
+            return Xa.reshape((B, D, L, -1))
         else:
-            return
+            return Xa.reshape((B, D, L, -1))
 
         # down sweep (first 2 steps unfolded)
-        Aa = A[:, :, 0 : L : 2 ** (num_steps - 2)]
-        Xa = X[:, :, 0 : L : 2 ** (num_steps - 2)]
-        # Xa[:, :, 1].add_(Aa[:, :, 1].mul(Xa[:, :, 2]))
-        Xa[:, :, 1] = Xa[:, :, 1] + (Aa[:, :, 1] * Xa[:, :, 2])
-        # Aa[:, :, 1].mul_(Aa[:, :, 2])
-        Aa[:, :, 1] = Aa[:, :, 1] * Aa[:, :, 2]
+        Aa = A[:, :, 0 : L : 2 ** (num_steps - 2), :]
+        Xa = X[:, :, 0 : L : 2 ** (num_steps - 2), :]
+
+        Xa[:, :, 1, :] = Xa[:, :, 1, :] + (Aa[:, :, 1, :] * Xa[:, :, 2, :])
+        Aa[:, :, 1, :] = Aa[:, :, 1, :] * Aa[:, :, 2, :]
 
         for k in range(num_steps - 3, -1, -1):
-            Aa = A[:, :, 0 : L : 2**k]
-            Xa = X[:, :, 0 : L : 2**k]
+            Aa = A[:, :, 0 : L : 2**k, :]
+            Xa = X[:, :, 0 : L : 2**k, :]
 
             T = Xa.shape[2]
             Aa = Aa.reshape((B, D, T // 2, 2, -1))
             Xa = Xa.reshape((B, D, T // 2, 2, -1))
 
-            # Xa[:, :, :-1, 1].add_(Aa[:, :, :-1, 1].mul(Xa[:, :, 1:, 0]))
-            Xa[:, :, :-1, 1] = Xa[:, :, :-1, 1] + (Aa[:, :, :-1, 1] * Xa[:, :, 1:, 0])
-            # Aa[:, :, :-1, 1].mul_(Aa[:, :, 1:, 0])
-            Aa[:, :, :-1, 1] = Aa[:, :, :-1, 1] * Aa[:, :, 1:, 0]
+            Xa[:, :, :-1, 1, :] = Xa[:, :, :-1, 1, :] + (
+                Aa[:, :, :-1, 1, :] * Xa[:, :, 1:, 0, :]
+            )
+            Aa[:, :, :-1, 1, :] = Aa[:, :, :-1, 1, :] * Aa[:, :, 1:, 0, :]
+
+        return Xa.reshape((B, D, L, -1))
 
 
 def reverse_pscan(A, X, use_cuda: bool):
