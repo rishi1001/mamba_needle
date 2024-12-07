@@ -32,7 +32,7 @@ def seq_main():
     config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))
     model = MambaLM(config, device=device, sequential=True)
 
-    train_losses = train_ptb(
+    train_errors, train_losses = train_ptb(
         model,
         train_data,
         seq_len=16,
@@ -41,14 +41,15 @@ def seq_main():
         lr=0.003,
         optimizer=ndl.optim.Adam,
     )
-    evaluate_ptb(model, train_data, seq_len=20, device=device)
+    evaluate_ptb(model, train_data, seq_len=16, device=device)
 
     with open("seq_train_losses.txt", "w") as f:
-        print("\n".join(train_losses), file=f)
+        print("\n".join([str(x) for x in train_losses]), file=f)
 
 
 def pscan_main():
-    device = ndl.cpu()
+    # device = ndl.cpu()
+    device = ndl.cuda()
     corpus = ndl.data.Corpus("data/ptb", max_lines=100)
     train_data = ndl.data.batchify(
         corpus.train, batch_size=8, device=device, dtype="float32"
@@ -57,7 +58,7 @@ def pscan_main():
     config = MambaLMConfig(d_model=16, n_layers=4, vocab_size=len(corpus.dictionary))
     model = MambaLM(config, device=device, sequential=False)
 
-    train_losses = train_ptb(
+    train_errors, train_losses = train_ptb(
         model,
         train_data,
         seq_len=16,
@@ -66,10 +67,10 @@ def pscan_main():
         lr=0.003,
         optimizer=ndl.optim.Adam,
     )
-    evaluate_ptb(model, train_data, seq_len=20, device=device)
+    evaluate_ptb(model, train_data, seq_len=16, device=device)
 
     with open("pscan_train_losses.txt", "w") as f:
-        print("\n".join(train_losses), file=f)
+        print("\n".join([str(x) for x in train_losses]), file=f)
 
 
 if __name__ == "__main__":
