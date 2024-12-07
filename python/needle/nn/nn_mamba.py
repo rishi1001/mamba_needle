@@ -154,8 +154,7 @@ class MambaBlock(Module):
         super().__init__()
 
         self.config = config
-
-        # TODO verify shapes while testing
+        self.device = device
 
         # projects block input from D to 2*ED (two branches)
         self.in_proj = Linear(
@@ -304,8 +303,6 @@ class MambaBlock(Module):
         x = x.reshape((-1, self.config.d_model))  # (B*L, D)
         xz = self.in_proj(x)  # (B, L, 2*ED)
         xz = xz.reshape((-1, L, 2 * self.config.d_inner))  # (B, L, 2*ED)
-        # x, z = xz.chunk(2, dim=-1)  # (B, L, ED), (B, L, ED)
-        # TODO check chunk
         x, z = chunk(xz, 2, dim=-1)  # (B, L, ED), (B, L, ED)
 
         # x branch
@@ -347,13 +344,6 @@ class MambaBlock(Module):
         deltaBC = deltaBC.reshape((B_, L, -1))
         x = x.reshape((B_, L, -1))
 
-        # TODO check split
-        # delta, B, C = ops.split(
-        #     deltaBC,
-        #     [self.config.dt_rank, self.config.d_state, self.config.d_state],
-        #     axis=-1,
-        # )  # (B, L, dt_rank), (B, L, N), (B, L, N)
-
         # Get the sizes to split
         sizes = [self.config.dt_rank, self.config.d_state, self.config.d_state]
 
@@ -393,39 +383,16 @@ class MambaBlock(Module):
         # Assign the result back to delta
         # delta = delta_result
 
-        # choose which selective_scan function to use, according to config
-        # our cuda pscan doesn't handle all of the fanciness of the official Mamba implementation
-        if False:  # self.config.use_cuda:
-            # these are unfortunately needed for the selective_scan_cuda function
-            x = x.transpose(1, 2)
-            B = B.transpose(1, 2)
-            C = C.transpose(1, 2)
-            z = z.transpose(1, 2)
+        delta = delta.transpose((1, 2))
+        delta = self.softplus(
+            delta + self.dt_proj.bias.reshape((1, 1, -1)).broadcast_to(delta.shape)
+        )
 
-            # "softplus" + "bias" + "y * silu(z)" operations are fused
-            y = self.selective_scan_cuda(
-                x,
-                delta,
-                A,
-                B,
-                C,
-                D,
-                z=z,
-                delta_softplus=True,
-                delta_bias=self.dt_proj.bias.float(),
-            )
-            y = y.transpose(1, 2)  # (B, L, ED)
-
+        if self.config.pscan:
+            y = self.selective_scan(x, delta, A, B, C, D)
         else:
-            delta = delta.transpose((1, 2))
-            delta = self.softplus(
-                delta + self.dt_proj.bias.reshape((1, 1, -1)).broadcast_to(delta.shape)
-            )
+            y = self.selective_scan_seq(x, delta, A, B, C, D)
 
-            if self.config.pscan:
-                y = self.selective_scan(x, delta, A, B, C, D)
-            else:
-                y = self.selective_scan_seq(x, delta, A, B, C, D)
 
         return y
 
@@ -465,6 +432,70 @@ class MambaBlock(Module):
 
         return y
 
+
+    def selective_scan_seq(self, x, dt, A, B, C, D):
+        """
+        Forward pass through the selective scan
+        Args:
+        x: Input tensor of shape (B, L, E*D)
+        dt: dt tensor of shape (B, L, E*D)
+        A: A tensor of shape (E*D, N)
+        B: B tensor of shape (B, L, N)
+        C: C tensor of shape (B, L, N)
+        D: D tensor of shape (E*D)
+        Returns:
+        Output tensor of shape (B, L, E*D)
+        """
+        batch_size, seq_length, d_inner = x.shape
+        _, d_state = A.shape
+        assert d_inner == self.config.d_inner
+        assert d_state == self.config.d_state
+
+        # Calculate dA (B, L, E*D, N)
+        dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (d_state,))
+                     * ops.broadcast_to(ops.reshape(A, (1, 1) + A.shape), (batch_size, seq_length) + A.shape))
+        assert dA.shape == (batch_size, seq_length, d_inner, d_state)
+
+        # Calculate dB (B, L, E*D, N)
+        dB = (ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (d_state,))
+              * ops.broadcast_to(ops.unsqueeze(B, 2), B.shape[:2] + (d_inner,) + B.shape[2:]))
+        assert dB.shape == (batch_size, seq_length, d_inner, d_state)
+
+        # Calculate dB*x (B, L, E*D, N)
+        dB_x = dB * ops.broadcast_to(ops.unsqueeze(x, 3), x.shape + (d_state,))
+        assert dB_x.shape == (batch_size, seq_length, d_inner, d_state)
+
+        # Initialize h (B, E*D, N)
+        h = init.zeros(batch_size, d_inner, d_state,
+                       device=self.device, requires_grad=True)
+        hs = []
+
+        # Sequential (RNN) approach involves iteration over length of sequence
+        dA_split = ops.split(dA, 1)
+        dB_x_split = ops.split(dB_x, 1)
+        for t in range(seq_length):
+            # SSM equation 1a/2a (Section 2 of paper)
+            h = dA_split[t] * h + dB_x_split[t]
+            hs.append(h)
+
+        # Combine into (B, L, E*D, N) Tensor
+        hs = ops.stack(hs, 1)
+        assert hs.shape == (batch_size, seq_length, d_inner, d_state)
+
+        # SSM equation 1b/2b (Section 2 of paper)
+        # y = (hs @ C.unsqueeze(-1)).squeeze(3)
+        hs_split = [ops.split(s, 0) for s in ops.split(hs, 0)]
+        C_split = [ops.split(s, 0) for s in ops.split(ops.unsqueeze(C, 3), 0)]
+        y_stack = [ops.stack([hs_split[i][j] @ C_split[i][j] for j in range(seq_length)], 0) for i in range(batch_size)]
+        y = ops.stack(y_stack, 0)
+        y = ops.reshape(y, (batch_size, seq_length, d_inner))
+        assert y.shape == (batch_size, seq_length, d_inner)
+
+        # Skip connection using D
+        y = y + ops.broadcast_to(ops.reshape(D, (1, 1, d_inner)), y.shape) * x
+
+        return y
+
     def batched_matmul(self, a: Tensor, b_transpose: Tensor) -> Tensor:
         """
         batched matrix multiplication;
@@ -485,43 +516,6 @@ class MambaBlock(Module):
 
         return (a * b_transpose).sum(len(a.shape) - 1)
 
-    def selective_scan_seq(self, x, delta, A, B, C, D):
-        # x : (B, L, ED)
-        # Δ : (B, L, ED)
-        # A : (ED, N)
-        # B : (B, L, N)
-        # C : (B, L, N)
-        # D : (ED)
-
-        # y : (B, L, ED)
-
-        _, L, _ = x.shape
-
-        deltaA = ops.exp(delta.unsqueeze(-1) * A)  # (B, L, ED, N)
-        deltaB = delta.unsqueeze(-1) * B.unsqueeze(2)  # (B, L, ED, N)
-
-        BX = deltaB * (x.unsqueeze(-1))  # (B, L, ED, N)
-
-        # TODO check dimensions
-        h = init.zeros(
-            x.size(0), self.config.d_inner, self.config.d_state, device=deltaA.device
-        )  # (B, ED, N)
-        hs = []
-
-        for t in range(0, L):
-            h = deltaA[:, t] * h + BX[:, t]
-            hs.append(h)
-
-        # TODO check stack
-        hs = ops.stack(hs, dim=1)  # (B, L, ED, N)
-
-        y = (hs @ C.unsqueeze(-1)).squeeze(
-            3
-        )  # (B, L, ED, N) @ (B, L, N, 1) -> (B, L, ED, 1)
-
-        y = y + D * x
-
-        return y
 
     # -------------------------- inference -------------------------- #
     """
