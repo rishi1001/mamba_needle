@@ -168,14 +168,14 @@ class MambaLMConfig(MambaConfig):
     vocab_size: int = 32000
     pad_vocab_size_multiple: int = 8
 
-    def __post_init__(self):
-        super().__post_init__()
+    # def __post_init__(self):
+    #     super().__post_init__()
 
-        if self.vocab_size % self.pad_vocab_size_multiple != 0:
-            self.vocab_size += (
-                self.pad_vocab_size_multiple
-                - self.vocab_size % self.pad_vocab_size_multiple
-            )
+    #     if self.vocab_size % self.pad_vocab_size_multiple != 0:
+    #         self.vocab_size += (
+    #             self.pad_vocab_size_multiple
+    #             - self.vocab_size % self.pad_vocab_size_multiple
+    #         )
 
     def to_mamba_config(self) -> MambaConfig:
         mamba_config_fields = {field.name for field in fields(MambaConfig)}
@@ -192,7 +192,6 @@ class MambaLM(nn.Module):
         self.device = device
         self.lm_config = lm_config
         self.config = lm_config.to_mamba_config()
-
         self.embedding = nn.Embedding(
             self.lm_config.vocab_size, self.config.d_model, device=device, dtype=dtype
         )

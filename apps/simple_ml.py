@@ -325,6 +325,43 @@ def evaluate_ptb(
         data, model, seq_len, loss_fn=loss_fn(), opt=None, device=device, dtype=dtype
     )
 
+def generate_text(model, data, dictionary, seq_len=40, device=None, dtype="float32"):
+    """
+    Generates text from the model.
+
+    Args:
+        model: LanguageModel instance
+        data: data of shape (nbatch, batch_size) given from batchify function
+        seq_len: i.e. bptt, sequence length
+
+    Returns:
+        text: generated text
+    """
+    np.random.seed(4)
+
+    model.eval()
+
+    nbatch, batch_size = data.shape
+    tot_num_batches = 0
+    tot_data = 0
+    tot_batch_loss = 0
+    tot_correct = 0
+
+    text = ""
+    for i in tqdm(range(0, nbatch - 1, seq_len)):
+        batch_x, batch_y = get_batch(data, i, seq_len, device=device, dtype=dtype)
+        if batch_x.shape[0] != seq_len:
+            continue
+        out, _ = model(batch_x)
+        logits = out.numpy()
+
+        text += " ".join([dictionary.idx2word[i] for i in logits.argmax(axis=1)])
+
+        del out
+        gc.collect()
+
+    return text
+
 
 ### CODE BELOW IS FOR ILLUSTRATION, YOU DO NOT NEED TO EDIT
 
