@@ -258,7 +258,6 @@ class MambaBlock(Module):
 
     def forward(self, x):
         # x : (B, L, D)
-
         # y : (B, L, D)
 
         _, L, _ = x.shape
