@@ -15,30 +15,6 @@ from .nn_basic import Dropout, LayerNorm1d, Linear, Module, Parameter, ReLU, Seq
 from .nn_conv import Conv1d
 from .nn_sequence import Embedding
 
-# import torch
-# import torch.nn as nn
-# import torch.nn.functional as F
-
-
-"""
-
-This file closely follows the mamba_simple.py from the official Mamba implementation, and the mamba-minimal by @johnma2006.
-The major differences are :
--the convolution is done with torch.nn.Conv1d
--the selective scan is done in PyTorch
-
-A sequential version of the selective scan is also available for comparison. Also, it is possible to use the official Mamba implementation.
-
-This is the structure of the torch modules :
-- A Mamba model is composed of several layers, which are ResidualBlockMamba.
-- A ResidualBlockMamba is composed of a MambaBlock, a normalization, and a residual connection : ResidualBlockMamba(x) = mamba(norm(x)) + x
-- This leaves us with the MambaBlock : its input x is (B, L, D) and its outputs y is also (B, L, D) (B=batch size, L=seq len, D=model dim).
-First, we expand x into (B, L, 2*ED) (where E is usually 2) and split it into x and z, each (B, L, ED).
-Then, we apply the short 1d conv to x, followed by an activation function (silu), then the SSM.
-We then multiply it by silu(z).
-See Figure 3 of the paper (page 8) for a visual representation of a MambaBlock.
-
-"""
 
 
 @dataclass
