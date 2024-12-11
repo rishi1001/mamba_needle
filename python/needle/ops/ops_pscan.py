@@ -9,9 +9,6 @@ from .ops_tuple import *
 
 class PScan(TensorOp):
 
-    def __init__(self, use_cuda: bool):
-        self.use_cuda = use_cuda
-
     def compute(self, A: NDArray, X: NDArray):  # type: ignore
         # A : (B, L, D, N)
         # X : (B, L, D, N)
@@ -34,7 +31,7 @@ class PScan(TensorOp):
         A_in = transpose(A_in, axes=(1, 2))  # (B, D, L, N)
         result = transpose(node, axes=(1, 2))  # (B, D, L, N)
 
-        out_grad = reverse_pscan(A_in, out_grad, self.use_cuda)
+        out_grad = reverse_pscan(A_in, out_grad)
 
         Q = init.zeros_like(A_in, device=A_in.device)
         Q[:, :, 1:, :] = Q[:, :, 1:, :] + (result[:, :, :-1, :] * out_grad[:, :, 1:, :])
@@ -42,27 +39,22 @@ class PScan(TensorOp):
         return Q.transpose((2, 1)), out_grad.transpose((2, 1))
 
 
-def pscan(A, X, use_cuda: bool):
-    return PScan(use_cuda)(A, X)
+def pscan(A, X):
+    return PScan()(A, X)
 
 
 class ReversePScan(TensorOp):
-
-    def __init__(self, use_cuda: bool):
-        self.use_cuda = use_cuda
 
     def compute(self, A: NDArray, X: NDArray):  # type: ignore
         # A : (B, D, L, N)
         # X : (B, D, L, N)
         A = A[:, :, 1:, :].pad(((0, 0), (0, 0), (0, 1), (0, 0)))
-        if self.use_cuda:
-            return A.compact().reverse_pscan(X.compact())
-        else:
-            return self.cpu_pscan_rev(A, X)
+        return A.compact().reverse_pscan(X.compact())
 
     def gradient(self, out_grad: Value, node: Value) -> Tuple[Value, ...]:
+        # not needed for our purposes
         raise NotImplementedError
 
 
-def reverse_pscan(A, X, use_cuda: bool):
-    return ReversePScan(use_cuda)(A, X)
+def reverse_pscan(A, X):
+    return ReversePScan()(A, X)

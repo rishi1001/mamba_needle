@@ -46,7 +46,7 @@ def main():
 
         start = perf_counter()
         for _ in range(1_000):
-            y2 = ndl.ops.pscan(A, X, use_cuda=False).cached_data.numpy()
+            y2 = ndl.ops.pscan(A, X).cached_data.numpy()
         print(L, perf_counter() - start)
 
         start = perf_counter()

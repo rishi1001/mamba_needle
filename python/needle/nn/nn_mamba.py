@@ -16,7 +16,6 @@ from .nn_conv import Conv1d
 from .nn_sequence import Embedding
 
 
-
 @dataclass
 class MambaConfig:
     d_model: int  # D
@@ -43,9 +42,6 @@ class MambaConfig:
     mup_base_width: float = 128  # width=d_model
 
     pscan: bool = True  # use parallel scan mode or sequential mode when training
-    use_cuda: bool = (
-        False  # use official CUDA implementation when training (not compatible with (b)float16)
-    )
 
     def __post_init__(self):
         self.d_inner = self.expand_factor * self.d_model  # E*D = ED in comments
@@ -248,15 +244,6 @@ class MambaBlock(Module):
             self.B_layernorm = None
             self.C_layernorm = None
 
-        if self.config.use_cuda:
-            try:
-                from mamba_ssm.ops.selective_scan_interface import selective_scan_fn
-
-                self.selective_scan_cuda = selective_scan_fn
-            except ImportError:
-                print("Failed to import mamba_ssm. Falling back to mamba.py.")
-                self.config.use_cuda = False
-
         self.silu = SiLu()
         self.softplus = Softplus()
 
@@ -291,10 +278,6 @@ class MambaBlock(Module):
         x = self.silu(x)
         y = self.ssm(x, z)
 
-        if self.config.use_cuda:
-            output = self.out_proj(y)  # (B, L, D)
-            return output  # the rest of the operations are done in the ssm function (fused with the CUDA pscan)
-
         # z branch
         z = self.silu(z)
 
@@ -307,7 +290,6 @@ class MambaBlock(Module):
 
     def ssm(self, x, z):
         # x : (B, L, ED)
-
         # y : (B, L, ED)
 
         (B_, L, ED) = x.shape
@@ -369,7 +351,6 @@ class MambaBlock(Module):
         else:
             y = self.selective_scan_seq(x, delta, A, B, C, D)
 
-
         return y
 
     def selective_scan(self, x, delta, A, B, C, D):
@@ -394,8 +375,7 @@ class MambaBlock(Module):
         ).broadcast_to((B_, L, ED, N))
 
         BX = deltaB * ops.unsqueeze(x, -1).broadcast_to((B_, L, ED, N))  # (B, L, ED, N)
-        # hs = ops.pscan(deltaA, BX, use_cuda=self.config.use_cuda)  # (B, L, ED, N)
-        hs = ops.pscan(deltaA, BX, use_cuda=True)  # (B, L, ED, N)
+        hs = ops.pscan(deltaA, BX)  # (B, L, ED, N)
 
         # y = (hs @ C.unsqueeze(-1)).squeeze(
         #     3
@@ -407,7 +387,6 @@ class MambaBlock(Module):
         y = y + D.reshape((1, 1, -1)).broadcast_to(x.shape) * x
 
         return y
-
 
     def selective_scan_seq(self, x, dt, A, B, C, D):
         """
@@ -427,14 +406,21 @@ class MambaBlock(Module):
         assert d_inner == self.config.d_inner
         assert d_state == self.config.d_state
 
-        # Calculate dA (B, L, E*D, N)
-        dA = ops.exp(ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (d_state,))
-                     * ops.broadcast_to(ops.reshape(A, (1, 1) + A.shape), (batch_size, seq_length) + A.shape))
+        # Calculate dA (B, L, E*D, N)
+        dA = ops.exp(
+            ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (d_state,))
+            * ops.broadcast_to(
+                ops.reshape(A, (1, 1) + A.shape), (batch_size, seq_length) + A.shape
+            )
+        )
         assert dA.shape == (batch_size, seq_length, d_inner, d_state)
 
         # Calculate dB (B, L, E*D, N)
-        dB = (ops.broadcast_to(ops.unsqueeze(dt, 3), dt.shape + (d_state,))
-              * ops.broadcast_to(ops.unsqueeze(B, 2), B.shape[:2] + (d_inner,) + B.shape[2:]))
+        dB = ops.broadcast_to(
+            ops.unsqueeze(dt, 3), dt.shape + (d_state,)
+        ) * ops.broadcast_to(
+            ops.unsqueeze(B, 2), B.shape[:2] + (d_inner,) + B.shape[2:]
+        )
         assert dB.shape == (batch_size, seq_length, d_inner, d_state)
 
         # Calculate dB*x (B, L, E*D, N)
@@ -442,8 +428,9 @@ class MambaBlock(Module):
         assert dB_x.shape == (batch_size, seq_length, d_inner, d_state)
 
         # Initialize h (B, E*D, N)
-        h = init.zeros(batch_size, d_inner, d_state,
-                       device=self.device, requires_grad=True)
+        h = init.zeros(
+            batch_size, d_inner, d_state, device=self.device, requires_grad=True
+        )
         hs = []
 
         # Sequential (RNN) approach involves iteration over length of sequence
@@ -454,7 +441,7 @@ class MambaBlock(Module):
             h = dA_split[t] * h + dB_x_split[t]
             hs.append(h)
 
-        # Combine into (B, L, E*D, N) Tensor
+        # Combine into (B, L, E*D, N) Tensor
         hs = ops.stack(hs, 1)
         assert hs.shape == (batch_size, seq_length, d_inner, d_state)
 
@@ -462,7 +449,10 @@ class MambaBlock(Module):
         # y = (hs @ C.unsqueeze(-1)).squeeze(3)
         hs_split = [ops.split(s, 0) for s in ops.split(hs, 0)]
         C_split = [ops.split(s, 0) for s in ops.split(ops.unsqueeze(C, 3), 0)]
-        y_stack = [ops.stack([hs_split[i][j] @ C_split[i][j] for j in range(seq_length)], 0) for i in range(batch_size)]
+        y_stack = [
+            ops.stack([hs_split[i][j] @ C_split[i][j] for j in range(seq_length)], 0)
+            for i in range(batch_size)
+        ]
         y = ops.stack(y_stack, 0)
         y = ops.reshape(y, (batch_size, seq_length, d_inner))
         assert y.shape == (batch_size, seq_length, d_inner)
@@ -491,7 +481,6 @@ class MambaBlock(Module):
         b_transpose = b_transpose.broadcast_to(broadcast_shape)
 
         return (a * b_transpose).sum(len(a.shape) - 1)
-
 
     # -------------------------- inference -------------------------- #
     """
